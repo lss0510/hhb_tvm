@@ -48,8 +48,8 @@ def parse_mean(mean):
     mean_list : list[int]
         The mean list
     """
-    if isinstance(mean, list):
-        return mean
+    if isinstance(mean, (list, tuple)):
+        return list(mean)
     if "," in mean:
         mean = mean.replace(",", " ")
     mean_list = mean.strip().split(" ")
@@ -211,7 +211,11 @@ class DatasetLoader(object):
                     for k in npz_data.keys():
                         valid_keys.append(convert_invalid_symbol(k))
                     if i_name not in valid_keys:
-                        logger.warning("The input data {} is not in the passed .npz file.")
+                        logger.warning(
+                            "The input name: {} is not in the passed .npz file input name: {}.".format(
+                                i_name, valid_keys
+                            )
+                        )
                         continue
                 split_npz_data = {}
                 epoch = list(npz_data.values())[0].shape[0]

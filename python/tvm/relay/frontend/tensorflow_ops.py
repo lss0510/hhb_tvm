@@ -315,7 +315,6 @@ def _pool3d(name):
 
 def _pooling(name):
     def _impl(inputs, attr, params, mod):
-
         attr["data_format"] = attr["data_format"].decode("utf-8")
         flip_layout = False
 
@@ -902,7 +901,7 @@ def convert_combined_nms_with_all_class_nms(
     clip_boxes,
 ):
     """Converts TF combined_nms using Relay all_class_max_suppression op"""
-    (selected_indices, selected_scores, num_detections,) = _op.vision.all_class_non_max_suppression(
+    (selected_indices, selected_scores, num_detections) = _op.vision.all_class_non_max_suppression(
         boxes,
         scores,
         max_output_boxes_per_class,
@@ -1998,7 +1997,7 @@ def _depth_to_space():
 def _space_to_depth():
     def _impl(inputs, attr, params, mod):
         block_size = int(attr["block_size"])
-        layout = attr["data_format"].decode("utf-8")
+        layout = "NCHW"
         return _op.nn.space_to_depth(inputs[0], block_size, layout)
 
     return _impl
@@ -2228,11 +2227,9 @@ def _lrn():
 def _sum():
     def _impl(inputs, attr, params, mod):
         axis = _get_tuple_param(params, inputs[1])
-        if axis[0] != 0:
-            if attr["_target_layout"] == "NCHW":
-                axis = [NCWH_DIM[x] for x in axis]
-        else:
-            axis = [0]
+        if attr["_target_layout"] == "NCHW":
+            axis = [NCWH_DIM[x] for x in axis]
+
         return AttrCvt(
             op_name="sum",
             extras={"axis": axis},
@@ -3249,7 +3246,6 @@ def _dequantize():
 
 def _extract_image_patches():
     def _impl(inputs, attr, params, mod):
-
         assert (
             attr["_target_layout"] == "NCHW"
         ), "_extract_image_patches op only support for 'NCHW'."
@@ -3261,7 +3257,7 @@ def _extract_image_patches():
         attr["padding"] = attr["padding"].decode("utf-8")
 
         if attr["padding"] == "VALID":
-            attr["padding"] = [0, 0]
+            padding = [0, 0]
         elif attr["padding"] == "SAME":
             stride_h, stride_w = strides
             kernel_h, kernel_w = kernel_shape

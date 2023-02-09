@@ -37,13 +37,26 @@ TVM_REGISTER_NODE_TYPE(QnnBinaryOpAttrs);
 bool QnnCSIMinimumRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                       const TypeReporter& reporter) {
   CHECK_EQ(types.size(), 3);
-  const auto* data = types[0].as<TensorTypeNode>();
-  if (data == nullptr) {
+  const auto* data1 = types[0].as<TensorTypeNode>();
+  const auto* data2 = types[1].as<TensorTypeNode>();
+  if (data1 == nullptr) {
     CHECK(types[0].as<IncompleteTypeNode>())
         << "minimum or maximum: expect input type to be TensorType but get " << types[0];
     return false;
   }
-  reporter->Assign(types[2], TensorType(data->shape, data->dtype));
+  if (data2 == nullptr) {
+    CHECK(types[1].as<IncompleteTypeNode>())
+        << "minimum or maximum: expect input type to be TensorType but get " << types[1];
+    return false;
+  }
+
+  std::vector<IndexExpr> in_shape1(data1->shape.begin(), data1->shape.end());
+  std::vector<IndexExpr> in_shape2(data2->shape.begin(), data2->shape.end());
+  std::vector<IndexExpr> oshape;
+
+  oshape = in_shape1.size() > in_shape2.size() ? in_shape1 : in_shape2;
+
+  reporter->Assign(types[2], TensorType(oshape, data1->dtype));
   return true;
 }
 

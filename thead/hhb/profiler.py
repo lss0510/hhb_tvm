@@ -39,9 +39,7 @@ from .core.arguments_manage import (
     ArgumentFilter,
 )
 from .core.profiler_manage import convert_tvm_trace2python, aitrace_options
-from .core.profiler_manage import get_cal_total_info, print_cal_total_info
-from .core.profiler_manage import get_mem_total_info, print_mem_total_info
-from .core.profiler_manage import profile_th1520_trace, dump_profile_result
+from .core.profiler_manage import dump_profile_result
 
 
 # pylint: disable=invalid-name
@@ -106,25 +104,6 @@ def driver_profiler(args_filter: ArgumentFilter):
         result = relay.analysis.get_aitrace_data(mod["main"], options)
         result = convert_tvm_trace2python(result)
 
-        dump_profile_result(result, args.output_type, args.indicator, args.ir_type, args.output)
-    elif args.ir_type == "th1520":
-        if "cal" in args.indicator:
-            logger.error("Unsupport 'cal' for indicator while setting --ir-type th1520.")
-            sys.exit()
-        if "binary" in args.output_type:
-            logger.error("Unsupport 'binary' for --output-type while setting --ir-type th1520.")
-            sys.exit()
-        if not args.model_file or not os.path.exists(args.model_file[0]):
-            logger.error("File not exits: %s" % args.model_file[0])
-            sys.exit()
-        try:
-            with open(args.model_file[0], "r") as f:
-                trace_data = json.load(f)
-        except:
-            logger.error("Invalid file for th1520 profiling: %s." % args.model_file)
-            sys.exit()
-
-        result = profile_th1520_trace(trace_data, args.indicator, args.npu_frequency)
         dump_profile_result(result, args.output_type, args.indicator, args.ir_type, args.output)
     else:
         raise HHBException("Unsupport for profiling type: {}\n".format(args.ir_type))

@@ -90,7 +90,7 @@ def hhb_quantize(relay_ir: HHBRelayIR, config, calibrate_data=None, save_to_dir=
     ----------
     relay_ir : HHBRelayIR
         Relay ir wrapper that holds module and params
-    config : HHBConfig
+    config : Config
         All config for HHB
     calibrate_data : List[Dict[str, numpy.ndarray]]
         The calibration data for quantization. It includes batches of data.
@@ -163,6 +163,8 @@ def add_quantize_parser(subparsers):
 def driver_quantize(args_filter: ArgumentFilter):
     """Driver quantize command"""
     args = args_filter.filtered_args
+    if args.board == "th1520" and (args.hybrid_computing or args.auto_hybrid_quantization):
+        args.board = "hth1520"
     if not os.path.exists(args.FILE) or not os.path.isdir(args.FILE):
         raise HHBException("The directory is not exists: {}".format(args.FILE))
     relay_ir = HHBRelayIR()

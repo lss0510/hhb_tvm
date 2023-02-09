@@ -46,7 +46,13 @@ class CodegenRef : public CodegenCSINN {
   void EmitHeader(void);
   virtual string get_ccode(void);
 
-  void SessionRunMode() { func_def_.OneLine("sess->base_run_mode = CSINN_RM_CPU_GRAPH;"); }
+  void SessionRunMode() {
+    if (auto_hybrid_quantization) {
+      func_def_.OneLine("sess->base_run_mode = CSINN_RM_CPU_BASE_HYBRID;");
+    } else {
+      func_def_.OneLine("sess->base_run_mode = CSINN_RM_CPU_GRAPH;");
+    }
+  }
 };
 
 }  // namespace csinn

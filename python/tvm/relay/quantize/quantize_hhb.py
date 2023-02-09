@@ -407,6 +407,32 @@ def InsertNOp(mod):
     return mod
 
 
+def InsertRelu(mod):
+    """insert relu"""
+
+    class BetweenSigmoidAndMul(relay.ExprMutator):
+        """insert relu between simoid and mul"""
+
+        def visit_call(self, call):
+            op_args = [self.visit(arg) for arg in call.args]
+            if call.op.name == "multiply":
+                new_pre_list = []
+                for pre in op_args:
+                    if isinstance(pre, _expr.Call) and pre.op.name == "sigmoid":
+                        new_call = relay.op.nn.relu(pre)
+                        new_pre_list.append(new_call)
+                    else:
+                        new_pre_list.append(pre)
+                new_call = _expr.Call(call.op, new_pre_list, call.attrs, call.type_args, call.span)
+                return new_call
+            new_call = _expr.Call(call.op, op_args, call.attrs, call.type_args, call.span)
+            return new_call
+
+    mod["main"] = BetweenSigmoidAndMul().visit(mod["main"])
+
+    return mod
+
+
 def save_const_output(mod, output_dir):
     """Save and remove const output"""
 
@@ -552,6 +578,10 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
     ]:
         module = InsertNOp(module)
 
+    if target in ("th1520", "hth1520"):
+        # fix sigmoid + mul acc bug in th1520 npu
+        module = InsertRelu(module)
+
     if params:
         module["main"] = _bind_params(module["main"], params)
 
@@ -588,7 +618,10 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
     if curr_qconfig.dtype_weight in ("float16", "bfloat16") or (
         (target not in ("th1520", "hth1520")) and curr_qconfig.dtype_weight == "float32"
     ):
-        dtype_float = True
+        if not (
+            target in ("c906", "rvm", "c908", "c920") and curr_qconfig.calibrate_mode == "scale"
+        ):
+            dtype_float = True
 
     if curr_qconfig.quantization_scheme == "float16_w_int8":
         dtype_float = False

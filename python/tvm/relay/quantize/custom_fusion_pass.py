@@ -539,6 +539,7 @@ class FuseActivateQuantInfo:
 
             def callback(self, pre: Expr, post: Expr, node_map: tvm.ir.container.Map) -> Expr:
                 call_node = node_map[self.call_patten][0]
+                dequantize_node = node_map[self.dequantize][0]
                 scale1_node = node_map[self.scale1][0]
                 zp1_node = node_map[self.zp1][0]
 
@@ -548,8 +549,13 @@ class FuseActivateQuantInfo:
                 zp1_val = get_quant_value(zp1_val)
 
                 call_attrs = _qnn_attrs(call_node.attrs)
+                dequantize_attrs = _qnn_attrs(dequantize_node.attrs)
                 # modify output quant params of call_node
                 call_attrs["q_params"][-1] = [1, 1, 0, scale1_val, zp1_val]
+
+                call_attrs["layer_name"] = (
+                    "fuse_" + call_attrs["layer_name"] + "_" + dequantize_attrs["layer_name"]
+                )
 
                 new_node = csi_op().all_handle[call_node.op.name](*call_node.args, **call_attrs)
 

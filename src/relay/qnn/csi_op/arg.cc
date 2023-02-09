@@ -25,6 +25,8 @@
 #include <tvm/relay/op_attr_types.h>
 #include <tvm/relay/qnn/attrs.h>
 
+#include <numeric>
+
 #include "../op/op_common.h"
 #include "../utils.h"
 
@@ -77,14 +79,53 @@ inline std::vector<int64_t> GetCSIReduceAxes(const uint32_t indim, const Array<I
   return r_axes;
 }
 
+inline std::vector<int64_t> GetReduceAxes(const uint32_t indim, const Array<Integer>& inaxis,
+                                          bool exclude) {
+  if (!inaxis.defined() || inaxis.empty()) {
+    std::vector<int64_t> r_axes(indim);
+    std::iota(r_axes.begin(), r_axes.end(), 0);
+    return r_axes;
+  }
+
+  std::vector<int64_t> in_axes;
+  for (auto i : inaxis) {
+    int64_t axis = i->value;
+    if (axis < 0) {
+      axis = axis + indim;
+    }
+
+    // Check out of bounds error
+    ICHECK(axis >= 0) << "Axis out of bounds in reduce operator.";
+    ICHECK(axis < indim) << "Axis out of bounds in reduce operator.";
+    in_axes.push_back(axis);
+  }
+
+  ICHECK(in_axes[in_axes.size() - 1] < indim)
+      << "Reduction axis " << in_axes[in_axes.size() - 1] << " exceeds input dimensions " << indim;
+
+  std::sort(in_axes.begin(), in_axes.end());
+
+  if (!exclude) {
+    return in_axes;
+  }
+
+  auto r_size = indim - in_axes.size();
+  std::vector<int64_t> r_axes(r_size);
+  for (uint32_t i = 0, j = 0, k = 0; i < indim; ++i) {
+    if (j < in_axes.size() && in_axes[j] == i) {
+      ++j;
+      continue;
+    }
+    r_axes[k++] = i;
+  }
+  return r_axes;
+}
+
 inline std::vector<IndexExpr> ReduceShapeImpl(const std::vector<IndexExpr>& in_shape,
                                               const QnnCSIReduceAttrs* param,
                                               const TypeReporter& reporter) {
   uint32_t indim = in_shape.size();
-  Array<Integer> inaxis = param->axis;
-  bool exclude = param->exclude;
-
-  auto r_axes = GetCSIReduceAxes(indim, inaxis, exclude);
+  auto r_axes = GetReduceAxes(indim, param->axis, param->exclude);
   if (!r_axes.size()) {
     return in_shape;
   }
@@ -101,8 +142,8 @@ inline std::vector<IndexExpr> ReduceShapeImpl(const std::vector<IndexExpr>& in_s
   }
 
   if (is_dynamic_input) {
-    CHECK(reporter->Assert(max_shape <
-                           tir::make_const(DataType::Int(64), std::numeric_limits<int32_t>::max())))
+    ICHECK(reporter->Assert(
+        max_shape < tir::make_const(DataType::Int(64), std::numeric_limits<int32_t>::max())))
         << "The maximum possible index of reduced shape cannot be more than int32 max.";
   }
 

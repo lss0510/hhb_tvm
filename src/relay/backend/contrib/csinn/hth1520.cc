@@ -147,7 +147,10 @@ void CodegenHTH1520::EmitSessionSetup(void) {
 
 void CodegenHTH1520::ModelBinarySave() {
   std::ostringstream t0;
-  t0 << "sess->base_quant_type = " << cfg->quantization_scheme << ";";
+  std::string quantization_scheme = cfg->quantization_scheme == "CSINN_QUANT_INT8_ASYM_W_SYM"
+                                        ? "CSINN_QUANT_INT8_ASYM"
+                                        : cfg->quantization_scheme;
+  t0 << "sess->base_quant_type = " << quantization_scheme << ";";
   func_def_.OneLine(t0);
 
   if (model_save == "run_only") {

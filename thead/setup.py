@@ -20,7 +20,7 @@
 from setuptools import find_packages
 from setuptools import setup
 
-__version__ = "2.2.0"
+__version__ = "2.4.0"
 
 
 def get_package_data_files():
@@ -30,14 +30,26 @@ def get_package_data_files():
         "config/process/include/*",
         "config/process/src/*",
         "config/template/*",
+        "config/wrapper/*",
         "prebuilt/runtime/riscv_linux/libprebuilt_runtime.a",
         "prebuilt/runtime/x86_linux/libprebuilt_runtime.a",
         "prebuilt/runtime/cmd_parse/cmd_parse.h",
         "prebuilt/decode/install/lib/rv/*",
+        "prebuilt/decode/install/lib/x86/*",
         "3rdparty/dlpack/include/dlpack/dlpack.h",
         "install_nn2/*",
-        "install_nn2/include/*",
-        "install_nn2/lib/*",
+        "install_nn2/x86/include/*",
+        "install_nn2/x86/lib/*",
+        "install_nn2/c906/include/*",
+        "install_nn2/c906/lib/*",
+        "install_nn2/c908/include/*",
+        "install_nn2/c908/lib/*",
+        "install_nn2/c920/include/*",
+        "install_nn2/c920/lib/*",
+        "install_nn2/th1520/include/*",
+        "install_nn2/th1520/lib/*",
+        "install_nn2/pnna_x86/include/*",
+        "install_nn2/pnna_x86/lib/*",
     ]
 
 

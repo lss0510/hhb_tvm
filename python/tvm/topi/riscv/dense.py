@@ -26,7 +26,7 @@ from tvm.contrib import cblas
 from tvm.contrib import mkl
 from tvm.contrib import dnnl
 
-from .utils import get_simd_32bit_lanes, intrin_add_vv, intrin_macc_vf, intrin_load
+from .utils import get_simd_32bit_lanes, intrin_add_vv, intrin_macc_vf, intrin_load, intrin_act
 from .utils import get_act_mod
 from .. import generic, tag
 from ..utils import traverse_inline, get_const_tuple
@@ -87,9 +87,13 @@ def _schedule_dense_pack_template(cfg, s, C, O):
         act_mod = None
         if "elemwise" in s[O].op.tag:
             act_mod = get_act_mod(s[O].op)
+        if "add" in str(s[O].op.body[0]) or "add" in str(s[O].op.name):
+            my_add = intrin_add_vv(factor, dtype, load_a=False, act_mod=act_mod)
+            s[O].tensorize(xi, my_add)
+        else:
+            my_act = intrin_act(factor, act_mod, dtype)
+            s[O].tensorize(xi, my_act)
 
-        my_add = intrin_add_vv(factor, dtype, load_a=False, act_mod=act_mod)
-        s[O].tensorize(xi, my_add)
         s[O].unroll(yi)
     return s
 

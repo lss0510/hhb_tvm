@@ -60,6 +60,7 @@ from .core.hhbir_manage import (
 from .core.preprocess_manage import collect_preprocess_config, set_preprocess_params, DatasetLoader
 from .core.simulate_manage import inference_model
 from .core.codegen_manage import collect_codegen_config
+from .core.frontend_manage import insert_preprocess_node
 
 # pylint: disable=invalid-name
 logger = logging.getLogger("HHB")
@@ -72,7 +73,7 @@ def hhb_runner(codegen_ir, config):
     ----------
     codegen_ir : HHBFloatCodegenIR or HHBX86QnnCodegenIR
         The codegened model.
-    config : HHBConfig
+    config : Config
         All config for HHB
 
     Returns
@@ -114,7 +115,7 @@ def hhb_inference(graph_module, dataset):
     graph_module.run(**dataset)
     output = []
     for i in range(graph_module.get_num_outputs()):
-        out = graph_module.get_output(i).asnumpy()
+        out = graph_module.get_output(i).numpy()
         output.append(out)
     return output
 
@@ -157,6 +158,23 @@ def driver_simulate(args_filter: ArgumentFilter):
             relay_ir = HHBRelayIR()
             relay_ir.load_model(args.FILE)
             input_module = relay_ir.get_model()
+
+            # add preprocess node into mod
+            all_filters = [
+                collect_preprocess_config,
+            ]
+            args_filter.filter_argument(all_filters)
+            args = args_filter.filtered_args
+            if args.preprocess_config.add_preprocess_node:
+                input_mod, input_params = insert_preprocess_node(
+                    input_module[0],
+                    input_module[1],
+                    args.preprocess_config.data_mean,
+                    args.preprocess_config.data_scale,
+                )
+                input_module = (input_mod, input_params)
+                logger.debug("Insert preprocess node into model successfully!")
+
             # convert to float codegen ir
             float_codegen_ir = HHBFloatCodegenIR()
             float_codegen_ir.convert(input_module, args.board, args.opt_level)

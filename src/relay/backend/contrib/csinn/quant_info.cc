@@ -82,9 +82,7 @@ bool QuantCalculator::is_contain_item(std::vector<T> arr, T target_item) {
 bool QuantCalculator::IsIntegralOrNot(string const_kind, string quantization_scheme) {
   std::vector<string> per_channel = {"conv_kernel", "depthwise_kernel", "conv_bias",
                                      "depthwise_bias"};
-  if ((quantization_scheme == "CSINN_QUANT_INT8_ASYM_W_SYM" ||
-       quantization_scheme == "CSINN_QUANT_INT4_ASYM_W_SYM") &&
-      !is_contain_item<string>(per_channel, const_kind)) {
+  if (!is_contain_item<string>(per_channel, const_kind)) {
     return true;
   }
   return false;
@@ -162,11 +160,23 @@ void QuantCalculator::GetAsymScale(float min_value, float max_value, int bits, Q
   }
 }
 
-void QuantCalculator::GetSymScale(float min_value, float max_value, int bits, Qinfo* qinfo) {
-  int valid_range = std::pow(2, bits - 1) - 1;
-  float abs_max = std::max(std::abs(min_value), std::abs(max_value));
-  qinfo->scale = abs_max / valid_range;
-  qinfo->zero_point = 0;
+void QuantCalculator::GetSymScale(float min_value, float max_value, int bits, Qinfo* qinfo,
+                                  QConfig_* cfg) {
+  if (bits == 16 && is_one_of<string>(cfg->quantization_scheme,
+                                      {"CSINN_QUANT_FLOAT16", "CSINN_QUANT_FLOAT16_W_INT8"})) {
+    if (cfg->calibrate_mode != "scale") {
+      qinfo->scale = 1.0;
+      qinfo->zero_point = 0;
+    } else {
+      qinfo->zero_point = 0;
+      qinfo->scale = 1.0;
+    }
+  } else {
+    int valid_range = std::pow(2, bits - 1) - 1;
+    float abs_max = std::max(std::abs(min_value), std::abs(max_value));
+    qinfo->scale = abs_max / valid_range;
+    qinfo->zero_point = 0;
+  }
 }
 
 QuantParams* QuantCalculator::GetQuantParamsBase(float scale, int32_t zp) {
@@ -197,7 +207,7 @@ QuantParams* QuantCalculator::GetQuantParamsBase(float min_value, float max_valu
   if (quant_type == "asym") {
     GetAsymScale(min_value, max_value, bits, qinfo, quantize_cfg->dtype_input);
   } else if (quant_type == "sym") {
-    GetSymScale(min_value, max_value, bits, qinfo);
+    GetSymScale(min_value, max_value, bits, qinfo, quantize_cfg);
   }
 
   if (qinfo->scale == 0) {
@@ -284,7 +294,7 @@ QuantParams* QuantCalculator::GetQuantParams(Array<Array<IndexExpr>> q_params,
       out_q_params[i].q_size = length;
       out_q_params[i].value_type = value_type;
       if (is_integral) {
-        out_q_params[i] = *GetIntegralQuantParams(&out_q_params[i], ACTIVATE, quantize_cfg);
+        out_q_params[i] = *GetIntegralQuantParams(&out_q_params[i], tensor_type, quantize_cfg);
       }
     }
     out_q_params[i].dtype = quantize_cfg->dtype_weight;
@@ -733,7 +743,7 @@ class QuantInfoMutator : public HHBExprMutator {
     } else if (IsOp(call, "qnn.csi.depth_to_space")) {
       ret = SisoOp<QnnCSISubPixelAttrs>(call);
     } else if (IsOp(call, "qnn.csi.dilation2d")) {
-      ret = TisoOp<QnnCSIDilation2DAttrs>(call);
+      ret = DisoOp<QnnCSIDilation2DAttrs>(call);
     } else if (IsOp(call, "qnn.csi.expand_dims")) {
       ret = SisoOp<QnnCSIExpandDimsAttrs>(call);
     } else if (IsOp(call, "qnn.csi.fsmn")) {

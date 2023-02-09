@@ -47,6 +47,8 @@ string CSINNTensor::to_layout(int32_t layout) {
     return "CSINN_LAYOUT_NCDHW";
   } else if (layout == CSINN_LAYOUT_NDHWC) {
     return "CSINN_LAYOUT_NDHWC";
+  } else if (layout == CSINN_LAYOUT_NLCDHW) {
+    return "CSINN_LAYOUT_NLCDHW";
   } else if (layout == CSINN_LAYOUT_O) {
     return "CSINN_LAYOUT_O";
   } else if (layout == CSINN_LAYOUT_OI) {

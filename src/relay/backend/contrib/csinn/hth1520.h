@@ -59,6 +59,16 @@ class CodegenHTH1520 : public CodegenHGref {
                       "qnn.csi.strided_slice",
                       "qnn.csi.transpose",
                       "qnn.csi.reshape"};
+
+    if (cfg->quantization_scheme == "CSINN_QUANT_INT8_SYM" ||
+        cfg->quantization_scheme == "CSINN_QUANT_INT16_SYM") {
+      cfg->dtype_activation = "float";
+      cfg->dtype_input = "float";
+      cfg->dtype_weight = "float";
+      cfg->weight_quantized_type = "sym";
+      cfg->activate_quantized_type = "sym";
+      base_dtype_ = "CSINN_DTYPE_FLOAT32";
+    }
   }
   virtual ~CodegenHTH1520() {}
   virtual void params_common_setup(std::ostringstream& decl, const CallNode* call, string op_name,
@@ -68,7 +78,7 @@ class CodegenHTH1520 : public CodegenHGref {
   void ModelBinarySave();
   string get_ccode();
   void phase1() final;
-  void SessionRunMode() { func_def_.OneLine("sess->base_run_mode = CSINN_RM_CPU_GRAPH;"); }
+  void SessionRunMode() { func_def_.OneLine("sess->base_run_mode = CSINN_RM_CPU_BASE_HYBRID;"); }
 };
 
 }  // namespace csinn

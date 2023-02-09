@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -15,21 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
+set -euxo pipefail
+script_dir="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 
-from . import benchmark
-from . import importer
-from . import codegen
-from . import profiler
-from . import quantizer
-from . import simulate
-
-# main
-from .main import Compiler
-from .main import Profiler
-from .core.arguments_manage import Config
-
-# common
-from .core.arguments_manage import generate_hhb_default_config
-from .core.common import convert_invalid_symbol
-from .core.common import print_top5
-from .main import set_debug_level
+python3 -m pytest -v $script_dir/../thead/python/test_hhb_api.py

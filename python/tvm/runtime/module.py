@@ -602,18 +602,6 @@ class Module(object):
         if llvm_target_triple is None and hasattr(fcompile, "get_target_triple"):
             llvm_target_triple = fcompile.get_target_triple()
 
-        if self.imported_modules:
-            if enabled("llvm") and llvm_target_triple:
-                path_obj = temp.relpath("devc.o")
-                m = _ffi_api.ModulePackImportsToLLVM(self, is_system_lib, llvm_target_triple)
-                m.save(path_obj)
-                files.append(path_obj)
-            else:
-                path_cc = temp.relpath("devc.cc")
-                with open(path_cc, "w") as f:
-                    f.write(_ffi_api.ModulePackImportsToC(self, is_system_lib))
-                files.append(path_cc)
-
         if has_c_module:
             options = []
             if "options" in kwargs:

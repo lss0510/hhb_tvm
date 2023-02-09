@@ -36,6 +36,22 @@ namespace csinn {
 class CodegenC920 : public CodegenGref {
  public:
   void EmitNBGSetup(void) {}
+  void ModelBinarySave() {
+    std::ostringstream t0;
+
+    t0 << "sess->base_quant_type = " << cfg->quantization_scheme << ";";
+    func_def_.OneLine(t0);
+
+    if (model_save == "run_only") {
+      t0 << "sess->model.save_mode = CSINN_RUN_ONLY;";
+    } else if (model_save == "save_and_run") {
+      t0 << "sess->model.save_mode = CSINN_SAVE_AND_RUN;";
+    } else {
+      std::cerr << "Unsupport for model save_mode type: " << model_save << "\n";
+      exit(-1);
+    }
+    func_def_.OneLine(t0);
+  }
 };
 
 }  // namespace csinn

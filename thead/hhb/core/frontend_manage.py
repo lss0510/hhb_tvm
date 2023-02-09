@@ -155,10 +155,10 @@ class HHBTFLiteFrontend(TFLiteFrontend):
             version = tflite_model.Version()
             logger.debug("tflite version %s", version)
         except Exception:
-            raise TVMCException("input file not tflite")
+            raise HHBException("input file not tflite")
 
         if version != 3:
-            raise TVMCException("input file not tflite version 3")
+            raise HHBException("input file not tflite version 3")
 
         logger.debug("tflite_input_type")
         if input_shape is None:
@@ -166,6 +166,11 @@ class HHBTFLiteFrontend(TFLiteFrontend):
         else:
             shape_dict = {name: shape for name, shape in zip(input_name, input_shape)}
             dtype_dict = {name: "float32" for name in input_name}
+
+        for k, v in shape_dict.items():
+            if len(v) == 4:
+                # convert to NCHW
+                shape_dict[k][1], shape_dict[k][3] = shape_dict[k][3], shape_dict[k][1]
 
         logger.debug("parse TFLite model and convert into Relay computation graph")
         target_layout = "NCHW"

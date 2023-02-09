@@ -20,6 +20,7 @@
 /* auto generate by HHB_VERSION "2.4.0" */
 
 #_hhb_header_files_#
+#include "shl_c920.h"
 
 #_hhb_macro_def_#
 
@@ -31,7 +32,45 @@
 
 #_hhb_utils_def_#
 
-#_hhb_postprocess_def_#
+static void postprocess(void *sess, const char *filename_prefix) {
+    int output_num, input_num;
+    struct csinn_tensor *input = csinn_alloc_tensor(NULL);
+    struct csinn_tensor *output = csinn_alloc_tensor(NULL);
+
+    input_num = csinn_get_input_number(sess);
+    for (int i = 0; i < input_num; i++) {
+        input->data = NULL;
+        csinn_get_input(i, input, sess);
+        print_tensor_info(input);
+    }
+    output_num = csinn_get_output_number(sess);
+    for (int i = 0; i < output_num; i++) {
+        output->data = NULL;
+        csinn_get_output(i, output, sess);
+        print_tensor_info(output);
+
+        struct csinn_tensor *foutput = shl_ref_tensor_transform_f32(output);
+        shl_show_top5(foutput, sess);
+
+        #if #_hhb_c920_postprocess_#
+        char filename[FILE_PREFIX_LENGTH] = {0};
+        char shape[SHAPE_LENGHT] = {0};
+        shape2string(output->dim, output->dim_count, shape, SHAPE_LENGHT);
+        snprintf(filename, FILE_PREFIX_LENGTH, "%s_output%u_%s.txt", filename_prefix, i, shape);
+        int output_size = csinn_tensor_size(foutput);
+        float* fdata = shl_c920_output_to_f32_dtype(i, output->data, sess);
+        save_data_to_file(filename, fdata, output_size);
+        shl_mem_free(fdata);
+        #endif
+
+        shl_ref_tensor_transform_free_f32(foutput);
+        if (!output->is_const) {
+            shl_mem_free(output->data);
+        }
+    }
+    csinn_free_tensor(input);
+    csinn_free_tensor(output);
+}
 
 void *create_graph(char *params_path) {
     char *params = get_binary_from_file(params_path, NULL);
@@ -90,7 +129,7 @@ int main(int argc, char **argv) {
         /* set input */
         for (int j = 0; j < input_num; j++) {
             #_get_input_data_stats_#
-            input_tensors[j]->data = shl_ref_f32_to_input_dtype(j, inputf[j], sess);
+            input_tensors[j]->data = shl_c920_f32_to_input_dtype(j, inputf[j], sess);
         }
 
         start_time = shl_get_timespec();

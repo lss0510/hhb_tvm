@@ -47,6 +47,7 @@ from .preprocess_manage import (
     collect_preprocess_config,
     set_preprocess_params,
     DatasetLoader,
+    parse_mean,
 )
 from .codegen_manage import collect_codegen_config, set_codegen_config
 from .simulate_manage import inference_model, inference_elf
@@ -130,6 +131,7 @@ def driver_main_command(args_filter: ArgumentFilter):
             args.pixel_format = "RGB"
 
         if args.data_mean:
+            args.data_mean = parse_mean(args.data_mean)
             args.data_mean = args.data_mean[::-1]
 
     logger.debug("Relay model:")
@@ -143,6 +145,9 @@ def driver_main_command(args_filter: ArgumentFilter):
 
     if args.E:
         return 0
+
+    if args.board == "th1520" and (args.hybrid_computing or args.auto_hybrid_quantization):
+        args.board = "hth1520"
 
     #######################################################################
     #
@@ -262,6 +267,7 @@ def driver_main_command(args_filter: ArgumentFilter):
         if args.no_quantize:
             x86_codegen_ir = HHBFloatCodegenIR()
             x86_codegen_ir.convert((mod, params), args.board, args.opt_level)
+            x86_codegen_ir.save_model(args.output)
         else:
             x86_codegen_ir = HHBX86QnnCodegenIR()
             x86_codegen_ir.convert(
@@ -290,9 +296,7 @@ def driver_main_command(args_filter: ArgumentFilter):
             raise HHBException("unsupport for board: {}.\n".format(args.board))
 
     if args.C or args.D or args.S or args.save_temps:
-        if args.board == "x86_ref":
-            x86_codegen_ir.save_model(args.output)
-        if args.board in target_board_list:
+        if args.board in target_board_list and not args.no_quantize:
             input_name_list, input_shape_list, _ = get_input_info_from_relay(
                 qnn_ir.get_model()[0], None
             )
@@ -357,12 +361,27 @@ def driver_main_command(args_filter: ArgumentFilter):
         intrinsic = False
         if args.ahead_of_time == "intrinsic":
             intrinsic = True
-        platform_deploy = HHBBoardBuildRuntime(args.board, args.output, intrinsic)
+        platform_deploy = HHBBoardBuildRuntime(args.board, args.output, intrinsic, args.link_lib)
 
         # build all c source files to .o
         platform_deploy.build_c()
         # link_elf for linux platform
         platform_deploy.link_elf()
+        # generate makefile
+        if args.with_makefile:
+            platform_deploy.generate_makefile()
+
+        if args.board in ("th1520", "hth1520"):
+            # for x86 simulate
+            platform_deploy = HHBBoardBuildRuntime("th1520_x86", args.output)
+
+            # build all c source files to .o
+            platform_deploy.build_c()
+            # link_elf for linux platform
+            platform_deploy.link_elf("hhb_th1520_x86_runtime", "hhb_th1520_x86_jit")
+            # generate makefile
+            if args.with_makefile:
+                platform_deploy.generate_makefile()
 
     if args.D:
         return 0
@@ -424,6 +443,7 @@ def driver_main_command(args_filter: ArgumentFilter):
     if args.no_quantize:
         m = graph_executor.GraphModule(x86_codegen_ir.get_model()["default"](ctx))
     else:
+        x86_codegen_ir.save_model(args.output)
         factory = x86_codegen_ir.get_factory()
         lib = x86_codegen_ir.get_lib(args.output)
         m = tvm.contrib.graph_executor.create(factory.get_graph_json(), lib, tvm.cpu(0))

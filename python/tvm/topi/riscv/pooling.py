@@ -156,20 +156,23 @@ def schedule_pool(outs, attrs, layout):
             Pool = OP.output(0)
             do_vectorize = "max" not in s[Pool].op.tag
             do_vectorize &= all(attrs.padding) == 0
+            do_vectorize &= len(outs[0].shape) == 5
+            last_axis_length = s[OP.output(0)].op.axis[-1].dom.extent.value
+            vl = get_simd_32bit_lanes()
+            do_vectorize &= vl >= last_axis_length
             _schedule(PaddedInput, Pool, do_vectorize)
             if OP != outs[0].op:
-                s[Pool].compute_at(s[outs[0]], outs[0].op.axis[2])
+                s[Pool].compute_at(s[outs[0]], outs[0].op.axis[3])
                 s[outs[0]].unroll(outs[0].op.axis[-1])
                 reduce_axes = s[Pool].op.reduce_axis
                 if "sum" in s[Pool].op.tag:
-                    last_axis_length = s[OP.output(0)].op.axis[-1].dom.extent.value
-                    vl = get_simd_32bit_lanes()
-
-                    if vl == last_axis_length:
+                    if do_vectorize and last_axis_length != 1:
                         avg_value_h = reduce_axes[0].dom.extent.value
                         avg_value_w = reduce_axes[1].dom.extent.value
                         f_value = avg_value_h * avg_value_w
-                        add_vf = intrin_mul_vf(vl, 1 / f_value, outs[0].dtype, not do_vectorize)
+                        add_vf = intrin_mul_vf(
+                            last_axis_length, 1 / f_value, outs[0].dtype, not do_vectorize
+                        )
                         s[outs[0]].tensorize(outs[0].op.axis[-1], add_vf)
         else:
             raise RuntimeError("Unsupported operator: %s" % OP.tag)
@@ -216,7 +219,7 @@ def schedule_adaptive_pool(outs):
             Pool = OP.output(0)
             _parallel_sch(s[Pool], outs[0].shape, True)
             if OP != outs[0].op:
-                s[Pool].compute_at(s[outs[0]], outs[0].op.axis[2])
+                s[Pool].compute_at(s[outs[0]], outs[0].op.axis[3])
                 s[outs[0]].unroll(outs[0].op.axis[-1])
                 reduce_axes = s[Pool].op.reduce_axis
                 if "sum" in s[Pool].op.tag:

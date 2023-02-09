@@ -173,7 +173,7 @@ void CodeGenCRiscv::PrintType(DataType t, std::ostream& os) {  // NOLINT(*)
         os << "vfloat16m1_t";
         break;
       case 132:
-        os << "vfloat16m1_t";
+        os << "vfloat16m2_t";
         break;
       default:
         fail = true;

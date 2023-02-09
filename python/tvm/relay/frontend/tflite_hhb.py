@@ -90,7 +90,6 @@ class OperatorConverter(object):
     """Operator Converted for converting TFLite ops to Relay ops"""
 
     def __init__(self, model, subgraph, exp_tab, layout="NHWC"):
-
         try:
             from tflite.BuiltinOperator import BuiltinOperator
             from tflite.BuiltinOptions import BuiltinOptions
@@ -2462,6 +2461,7 @@ class OperatorConverter(object):
             params["count_include_pad"] = False
             params["out_dtype"] = "float32"
             params["q_params"] = q_params
+            params["dilation"] = [1, 1]
         if self.target_layout == "NCHW":
             params["layout"] = "NCHW"
         if pool_type == "average":
@@ -3247,11 +3247,11 @@ def get_scalar_from_constant(expr):
     assert (
         isinstance(expr, _expr.Constant) and not expr.data.shape
     ), "Expr is not a constant scalar."
-    value = expr.data.asnumpy()
+    value = expr.data.numpy()
     assert value.dtype == np.dtype(np.int32) or value.dtype == np.dtype(
         np.float32
     ), "value must be float32/int32"
-    return np.asscalar(value)
+    return value.item(0)
 
 
 def get_tensor_from_constant(expr):

@@ -56,9 +56,14 @@ CSIConstant* CodegenC906::CastParams(CSIConstant* data, string target_dtype,
       output->mtype = CSINN_MEM_TYPE_CPU_ALIGNED;
       output->set_align(32);
       output->set_offset(8);
-      for (int i = 0; i < size; i++) {
-        int16_t out_ = float32_to_float16(input_data[i]);
-        out[i] = out_;
+      for (int i = 0; i < inner_size; i++) {
+        for (int c = 0; c < q_size; c++) {
+          int index = i * q_size + c;
+
+          float q_value = input_data[index] / q_infos[c].scale;
+          int16_t out_ = float32_to_float16(q_value);
+          out[i] = out_;
+        }
       }
     } else {
       LOG(ERROR) << "C906 get error dtype:" << target_dtype;
@@ -112,7 +117,12 @@ void CodegenC906::Conv2d(const CallNode* call, string op_name) {
   string kernel_name = "kernel_" + to_string(buf_idx_);
 
   auto kernel_qinfo = GetCallOPQuant(call, 1);
-  CreateConstantTensor(op, kernel, kernel_name, wshape, kernel_qinfo, depthwise_kernel);
+  if (cfg->quantization_scheme == "CSINN_QUANT_FLOAT16_W_INT8") {
+    kernel_qinfo->dtype = "int8_t";
+    CreateWeightTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
+  } else {
+    CreateConstantTensor(op, kernel, kernel_name, wshape, kernel_qinfo, depthwise_kernel);
+  }
 
   bool gemm_kernel = is_gemm_kernel(depthwise_kernel, op);
 

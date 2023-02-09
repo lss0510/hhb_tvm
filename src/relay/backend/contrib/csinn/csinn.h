@@ -92,7 +92,7 @@ struct output_element {
   std::vector<string> names;
 };
 
-#define HHB_VERSION "2.2.0"
+#define HHB_VERSION "2.4.0"
 
 /*! \brief Attributes to store the options for CSI-NN2 */
 struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
@@ -164,6 +164,9 @@ struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
 
   int model_priority;
 
+  double low_bound_scale;
+  double high_bound_scale;
+
   TVM_DECLARE_ATTRS(CSINNConfigNode, "ext.attrs.CSINNConfigNode") {
     TVM_ATTR_FIELD(ahead_of_time).set_default("unset");
     TVM_ATTR_FIELD(sid).set_default("csinn");
@@ -225,6 +228,8 @@ struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
     TVM_ATTR_FIELD(from_quant_file).set_default(false);
     TVM_ATTR_FIELD(conv2d_algorithm).set_default("unset");
     TVM_ATTR_FIELD(matrix_extension_mlen).set_default(0);
+    TVM_ATTR_FIELD(low_bound_scale).set_default(1.0);
+    TVM_ATTR_FIELD(high_bound_scale).set_default(1.0);
   }
 };
 
@@ -391,9 +396,15 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
     cfg->nbit_activation = opt_cfg->nbit_activation;
     cfg->weight_quantized_type = opt_cfg->weight_quantized_type;
     cfg->activate_quantized_type = opt_cfg->activate_quantized_type;
+    cfg->calibrate_mode = opt_cfg->calibrate_mode;
+    cfg->low_bound_scale = opt_cfg->low_bound_scale;
+    cfg->high_bound_scale = opt_cfg->high_bound_scale;
 
     hybrid_cfg = new QConfig_();
     __update_hybrid_quantization(hybrid_cfg, hybrid_quantization_scheme);
+    hybrid_cfg->calibrate_mode = opt_cfg->calibrate_mode;
+    hybrid_cfg->low_bound_scale = opt_cfg->low_bound_scale;
+    hybrid_cfg->high_bound_scale = opt_cfg->high_bound_scale;
     if (target_ == "th1520" && hybrid_quantization_scheme == "int16_sym") {
       hybrid_cfg->dtype_activation = "float";
       hybrid_cfg->dtype_input = "float";
@@ -436,7 +447,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
                                     std::vector<int> shape, string target_dtype,
                                     QuantParams* input_quant_params,
                                     QuantParams* kernel_quant_params,
-                                    QuantParams* bias_quant_params);
+                                    QuantParams* bias_quant_params, QConfig_* quantize_cfg = NULL);
 
   virtual void CreateBiasTensor(CSINNOP* op, const CallNode* call, CSIConstant* data, string name,
                                 Array<Array<IndexExpr>> q_params, bool* fuse_zp,
@@ -502,6 +513,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
   virtual void Conv2d(const CallNode* call, string op_name);
   virtual void Conv3d(const CallNode* call);
   virtual void CropResize(const CallNode* call);
+  virtual void Cast(const CallNode* call);
   virtual void DeConv2d(const CallNode* call);
   virtual void DeConv3d(const CallNode* call);
   virtual void Dense(const CallNode* call);
@@ -878,9 +890,12 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       if (layout_ == "NHWC") {
         return CSINN_LAYOUT_NDHWC;
       }
-    } else {
-      LOG(FATAL) << "Unsupported shape size " << shape.size();
+    } else if (shape.size() == 6) {
+      if (layout_ == "NCHW") {
+        return CSINN_LAYOUT_NLCDHW;
+      }
     }
+    LOG(FATAL) << "Unsupported shape size " << shape.size();
     return CSINN_LAYOUT_NULL;
   }
 
@@ -1120,19 +1135,47 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
     return str;
   }
 
+  /*!
+   * \brief Convert fp32 into fp16
+   *
+   * ref to:
+   * https://github.com/OpenCyphal/libcanard/blob/636795f4bc395f56af8d2c61d3757b5e762bb9e5/canard.c#L811-L834
+   *
+   */
   int16_t float32_to_float16(float value) {
-    int16_t ret;
+    union FP32 {
+      uint32_t u;
+      float f;
+    };
 
-    if (value > -6.1e-5 && value < 6.1e-5) {
-      return 0;
+    const union FP32 f32inf = {255UL << 23};
+    const union FP32 f16inf = {31UL << 23};
+    const union FP32 magic = {15UL << 23};
+    const uint32_t sign_mask = 0x80000000U;
+    const uint32_t round_mask = ~0xFFFU;
+
+    union FP32 in;
+    in.f = value;
+    uint32_t sign = in.u & sign_mask;
+    in.u ^= sign;
+
+    int16_t out = 0;
+
+    if (in.u >= f32inf.u) {
+      out = (in.u > f32inf.u) ? (int16_t)0x7FFFU : (int16_t)0x7C00U;
+    } else {
+      in.u &= round_mask;
+      in.f *= magic.f;
+      in.u -= round_mask;
+      if (in.u > f16inf.u) {
+        in.u = f16inf.u;
+      }
+      out = (int16_t)(in.u >> 13);
     }
-    int32_t* org_format_addr = reinterpret_cast<int32_t*>(&value);
-    int32_t org_format = *org_format_addr;
-    int16_t sign = (org_format & 0x80000000) >> 16;
-    int16_t frac = (org_format & 0x7fffff) >> 13;
-    int16_t exp = (((((org_format >> 23) & 0xff) - 128) + 16) & 0x1f) << 10;
-    ret = sign | frac | exp;
-    return ret;
+
+    out |= (int16_t)(sign >> 16);
+
+    return out;
   }
 
   int16_t float32_to_bfloat16(float value) {

@@ -17,7 +17,7 @@
  * under the License.
  */
 
-/* auto generate by HHB_VERSION "2.2.0" */
+/* auto generate by HHB_VERSION "2.4.0" */
 
 #ifndef HHB_IO_H_
 #define HHB_IO_H_

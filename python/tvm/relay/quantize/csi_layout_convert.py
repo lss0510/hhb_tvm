@@ -206,6 +206,14 @@ def nchw_to_nhwc(mod):
             """convert minimum layout"""
             return self.diso_convert(op_args, attrs, "minimum")
 
+        @nchw2nhwc_func_register("qnn.csi.split")
+        def split(self, op_args, attrs):
+            """convert split layout"""
+            in_rank = len(infer_shape(op_args[0]))
+            if in_rank == 4:
+                attrs["axis"] = self.axis_convert(attrs["axis"])
+            return relay.qnn.op.csi_split(op_args[0], **attrs)
+
         @nchw2nhwc_func_register("qnn.csi.concatenate")
         def concatenate(self, op_args, attrs):
             """convert concatenate layout"""
@@ -432,6 +440,12 @@ class FuseTRDense:
                 in_shape = infer_shape(node_map[self.t][0])
                 reshape_attr = _qnn_attrs(node_map[self.r][0].attrs)
                 dense_attr = _qnn_attrs(node_map[self.dense][0].attrs)
+
+                # check
+                transpose_attr = _qnn_attrs(node_map[self.t][0].attrs)
+                trans_axes = transpose_attr["axes"]
+                if trans_axes != [0, 3, 1, 2]:
+                    raise Exception("dense fuse error!")
 
                 w_shape = weight.shape
                 new_weight = weight.reshape([-1, *in_shape])

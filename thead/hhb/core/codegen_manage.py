@@ -46,6 +46,8 @@ def collect_codegen_config(filtered_args, extra=None):
     filtered_args.codegen_config.th1520_input_fix_size = parse_mean(
         filtered_args.codegen_config.th1520_input_fix_size
     )
+    if filtered_args.codegen_config.model_save == "save_only":
+        raise HHBException("Unsupport --model-save = save_only.\n")
 
 
 @argument_filter_helper
@@ -100,12 +102,13 @@ def get_execute_path():
     return execute_path
 
 
-def main_c_codegen(
+def entry_c_codegen(
     codegen_obj: HHBBoardQnnCodegenIR,
     input_shape,
     output_shape,
     board,
     output_path,
+    main_file,
     postprocess="top5",
     model_save="run_only",
     without_preprocess=False,
@@ -119,21 +122,6 @@ def main_c_codegen(
     """Generate the main.c file"""
 
     execute_path = get_execute_path()
-    if board == "anole":
-        if multithread:
-            main_file = os.path.join(execute_path, "config", "anole_multithread.tp")
-        else:
-            main_file = os.path.join(execute_path, "config", "anole.tp")
-    elif board in ("th1520", "hth1520"):
-        main_file = os.path.join(execute_path, "config", "th1520.tp")
-    elif board in ("c906", "rvm", "c908", "c920"):
-        if dynamic_shape:
-            main_file = os.path.join(execute_path, "config", "c906_cmdline.tp")
-        else:
-            main_file = os.path.join(execute_path, "config", "c906.tp")
-    else:
-        without_preprocess = True
-        main_file = os.path.join(execute_path, "config", "x86_ref.tp")
 
     with open(main_file, "r") as f:
         code_str = f.read()
@@ -313,6 +301,12 @@ def main_c_codegen(
     postprocess_str = postprocess_str.replace("#_save_output_stats_#", save_output)
     code_str = code_str.replace("#_hhb_postprocess_def_#", postprocess_str)
 
+    if board == "c920":
+        if "save" in postprocess:
+            code_str = code_str.replace("#_hhb_c920_postprocess_#", "1")
+        else:
+            code_str = code_str.replace("#_hhb_c920_postprocess_#", "0")
+
     #######################################################################
     #
     # Main Codegen
@@ -359,7 +353,8 @@ def main_c_codegen(
                 aligned_buffer_copy += (
                     "input_tensors[" + str(i) + "]->data = input_aligned[" + str(i) + "];\n"
                 )
-                aligned_buffer_free += "shl_mem_free(input_aligned[j]);"
+                if i == 0:
+                    aligned_buffer_free += "shl_mem_free(input_aligned[j]);"
             else:
                 if i != 0:
                     aligned_buffer_copy += " " * 8
@@ -440,8 +435,104 @@ def main_c_codegen(
             run_csinn_stats_thead += "input[" + str(i) + "], "
     code_str = code_str.replace("#_tensor_shape_#", run_csinn_stats_anole)
 
+    return code_str
+
+
+def main_c_codegen(
+    codegen_obj: HHBBoardQnnCodegenIR,
+    input_shape,
+    output_shape,
+    board,
+    output_path,
+    postprocess="top5",
+    model_save="run_only",
+    without_preprocess=False,
+    preprocess_params=None,
+    multithread=False,
+    input_memory_type=None,
+    q_scheme=None,
+    dynamic_shape=None,
+    hhb_gen=False,
+):
+    """Generate the main.c file"""
+
+    execute_path = get_execute_path()
+    if board == "anole":
+        if multithread:
+            main_file = os.path.join(execute_path, "config", "anole_multithread.tp")
+        else:
+            main_file = os.path.join(execute_path, "config", "anole.tp")
+    elif board in ("th1520", "hth1520"):
+        main_file = os.path.join(execute_path, "config", "th1520.tp")
+    elif board in ("c906", "rvm", "c908"):
+        if dynamic_shape:
+            main_file = os.path.join(execute_path, "config", "c906_cmdline.tp")
+        else:
+            main_file = os.path.join(execute_path, "config", "c906.tp")
+    elif board == "c920":
+        main_file = os.path.join(execute_path, "config", "c920.tp")
+    else:
+        without_preprocess = True
+        main_file = os.path.join(execute_path, "config", "x86_ref.tp")
+
+    code_str = entry_c_codegen(
+        codegen_obj,
+        input_shape,
+        output_shape,
+        board,
+        output_path,
+        main_file,
+        postprocess,
+        model_save,
+        without_preprocess,
+        preprocess_params,
+        multithread,
+        input_memory_type,
+        q_scheme,
+        dynamic_shape,
+        hhb_gen,
+    )
+
     logger.info("save main souce to %s", os.path.join(output_path, codegen_obj.main_source_name))
     with open(os.path.join(output_path, codegen_obj.main_source_name), "w") as f:
+        f.write(code_str)
+
+
+def jit_c_codegen(
+    codegen_obj: HHBBoardQnnCodegenIR,
+    input_shape,
+    output_shape,
+    board,
+    output_path,
+    preprocess_params=None,
+    q_scheme=None,
+):
+    """Generate the main.c file"""
+
+    execute_path = get_execute_path()
+    if board in ("th1520", "hth1520", "c920"):
+        main_file = os.path.join(execute_path, "config", "th1520_jit.tp")
+
+    code_str = entry_c_codegen(
+        codegen_obj,
+        input_shape,
+        output_shape,
+        board,
+        output_path,
+        main_file,
+        "top5",
+        "run_only",
+        True,
+        preprocess_params,
+        False,
+        None,
+        q_scheme,
+        None,
+        False,
+    )
+
+    logger.info("save jit souce to %s", os.path.join(output_path, "jit.c"))
+    with open(os.path.join(output_path, "jit.c"), "w") as f:
         f.write(code_str)
 
 

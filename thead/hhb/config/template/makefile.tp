@@ -15,21 +15,26 @@
 # specific language governing permissions and limitations
 # under the License.
 
+CC = #_hhb_makefile_compiler_#
 
-from . import benchmark
-from . import importer
-from . import codegen
-from . import profiler
-from . import quantizer
-from . import simulate
+INCLUDE += #_hhb_makefile_include_#
 
-# main
-from .main import Compiler
-from .main import Profiler
-from .core.arguments_manage import Config
+LDFLAGS += #_hhb_makefile_ldflag1_#
 
-# common
-from .core.arguments_manage import generate_hhb_default_config
-from .core.common import convert_invalid_symbol
-from .core.common import print_top5
-from .main import set_debug_level
+CFLAGS += #_hhb_makefile_cflag_#
+LDFLAGS += #_hhb_makefile_ldflag2_#
+
+.PHONY: clean all
+
+all: #_hhb_makefile_default_target_#
+
+#_hhb_makefile_compile_obj_#
+
+#_hhb_makefile_elf_#
+
+#_hhb_makefile_py_wrapper_#
+
+#_hhb_makefile_run_sim_#
+
+clean:
+	#_hhb_makefile_clean_#

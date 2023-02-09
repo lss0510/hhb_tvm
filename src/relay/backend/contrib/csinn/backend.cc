@@ -350,7 +350,7 @@ Expr HHBExprMutator::visit_expr(const TupleGetItemNode* op) {
   } else {
     auto tuple = TupleGetItem(t, op->index, op->span);
     tuple->hhb_expr_extend_ = op->hhb_expr_extend_;
-    t.push_next_expr(tuple.get());
+    t.push_next_expr(tuple.get(), op->index);
     return tuple;
   }
 }

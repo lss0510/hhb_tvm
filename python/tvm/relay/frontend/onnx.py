@@ -456,6 +456,17 @@ class Pool(OnnxOpConverter):
         attr_cvt, data = cls._run_calculation(inputs, attr, params)
         out = attr_cvt([data], attr, params)
 
+        if len(input_shape) == 3:
+            input_shape = [*input_shape, 1]
+            data = _op.reshape(data, input_shape)
+            new_attr = {}
+            new_attr["pool_size"] = [*attr["kernel_shape"], 1]
+            new_attr["padding"] = attr["pads"]
+            new_attr["ceil_mode"] = attr["ceil_mode"]
+            new_attr["strides"] = [*attr["strides"], 1]
+            if cls.name == "max_pool":
+                out = _op.nn.max_pool2d(data, **new_attr)
+
         if ndim - len(attr["kernel_shape"]) == 1:
             out = _op.squeeze(out, axis=[0])
         return out
@@ -1608,7 +1619,6 @@ class SpaceToDepth(OnnxOpConverter):
 
     @classmethod
     def _impl_v1(cls, inputs, attr, params):
-
         block_size = int(attr["blocksize"])
         return _op.nn.space_to_depth(inputs[0], block_size)
 
@@ -3369,7 +3379,6 @@ class ReverseSequence(OnnxOpConverter):
 
     @classmethod
     def _impl_v10(cls, inputs, attr, params):
-
         return _op.reverse_sequence(inputs[0], inputs[1], attr["time_axis"], attr["batch_axis"])
 
 
@@ -4607,7 +4616,6 @@ class QLinearLeakyRelu(OnnxOpConverter):
 
     @classmethod
     def _impl_v10(cls, inputs, attr, params):
-
         a_scale = get_scalar(inputs[1], params)
         a_zero_point = get_scalar(inputs[2], params, "int32")
         y_scale = fold_constant(get_scalar(inputs[3], params))
@@ -5260,6 +5268,7 @@ class SequenceInsert(OnnxOpConverter):
 
 # compatible operators that do NOT require any conversion.
 _identity_list = []
+
 
 # _convert_map defines maps of name to converter functor(callable)
 # for 1 to 1 mapping, use Renamer if nothing but name is different

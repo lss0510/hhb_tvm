@@ -41,8 +41,8 @@ logger = logging.getLogger("HHB")
 
 def hhb_version():
     """Version information"""
-    __version__ = "2.2.0"
-    __build_time__ = "20230209"
+    __version__ = "2.4.0"
+    __build_time__ = "20230614"
     return "HHB version: " + __version__ + ", build " + __build_time__
 
 
@@ -73,6 +73,18 @@ def parse_mean(mean):
     # if len(mean_list) == 1:
     #     mean_list = mean_list * 3
     return mean_list
+
+
+class HHBArgumentParser(argparse.ArgumentParser):
+    """HHB ArgumentParser that avoids to allow_abbrev=False invalid for short options
+    since Python3.8
+    """
+
+    def _get_option_tuples(self, option_string):
+        res = []
+        if self.allow_abbrev:
+            res = super()._get_option_tuples(option_string)
+        return res
 
 
 class HHBException(Exception):

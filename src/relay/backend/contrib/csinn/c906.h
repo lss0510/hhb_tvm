@@ -45,6 +45,21 @@ class CodegenC906 : public CodegenGref {
     conv2d_algorithm_ = opt_cfg->conv2d_algorithm;
   }
 
+  void ModelBinarySave() {
+    std::ostringstream t0;
+
+    t0 << "sess->base_quant_type = " << cfg->quantization_scheme << ";";
+    func_def_.OneLine(t0);
+
+    if (model_save == "run_only") {
+      t0 << "sess->model.save_mode = CSINN_RUN_ONLY;";
+    } else {
+      std::cerr << "Unsupport for model save_mode type: " << model_save << "\n";
+      exit(-1);
+    }
+    func_def_.OneLine(t0);
+  }
+
   virtual CSIConstant* CastParams(CSIConstant* data, string target_dtype, QuantParams* quant_params,
                                   bool depthwise_kernel);
   virtual void Conv2d(const CallNode* call, string op_name);

@@ -52,12 +52,12 @@ bool QnnCSISegmentRel(const Array<Type>& types, int num_inputs, const Attrs& att
 
   std::vector<IndexExpr> oshape;
   if (dshape.size() == 1) {
-    oshape.push_back(param->length);
+    oshape.push_back(param->num_segments);
   } else if (dshape.size() == 2) {
     oshape.push_back(dshape[0]);
-    oshape.push_back(param->length);
+    oshape.push_back(param->num_segments);
   } else {
-    oshape.push_back(param->length);
+    oshape.push_back(param->num_segments);
     for (uint i = 1; i < dshape.size(); i++) {
       oshape.push_back(dshape[i]);
     }
@@ -69,10 +69,10 @@ bool QnnCSISegmentRel(const Array<Type>& types, int num_inputs, const Attrs& att
 }
 
 // QNN segment max operator.
-Expr MakeQnnCSISegmentMax(Expr data, Expr segment_ids, int32_t length, DataType out_dtype,
+Expr MakeQnnCSISegmentMax(Expr data, Expr segment_ids, int32_t num_segments, DataType out_dtype,
                           Array<Array<IndexExpr>> q_params, String layer_name) {
   auto attrs = make_object<QnnCSISegmentAttrs>();
-  attrs->length = std::move(length);
+  attrs->num_segments = std::move(num_segments);
   attrs->out_dtype = out_dtype;
   attrs->q_params = std::move(q_params);
   attrs->layer_name = std::move(layer_name);
@@ -101,10 +101,10 @@ RELAY_REGISTER_OP("qnn.csi.segment_max")
 TVM_REGISTER_GLOBAL("relay.qnn.op._make.CSISegmentMax").set_body_typed(MakeQnnCSISegmentMax);
 
 // QNN segment min operator.
-Expr MakeQnnCSISegmentMin(Expr data, Expr segment_ids, int32_t length, DataType out_dtype,
+Expr MakeQnnCSISegmentMin(Expr data, Expr segment_ids, int32_t num_segments, DataType out_dtype,
                           Array<Array<IndexExpr>> q_params, String layer_name) {
   auto attrs = make_object<QnnCSISegmentAttrs>();
-  attrs->length = std::move(length);
+  attrs->num_segments = std::move(num_segments);
   attrs->out_dtype = out_dtype;
   attrs->q_params = std::move(q_params);
   attrs->layer_name = std::move(layer_name);
@@ -133,10 +133,10 @@ RELAY_REGISTER_OP("qnn.csi.segment_min")
 TVM_REGISTER_GLOBAL("relay.qnn.op._make.CSISegmentMin").set_body_typed(MakeQnnCSISegmentMin);
 
 // QNN segment mean operator.
-Expr MakeQnnCSISegmentMean(Expr data, Expr segment_ids, int32_t length, DataType out_dtype,
+Expr MakeQnnCSISegmentMean(Expr data, Expr segment_ids, int32_t num_segments, DataType out_dtype,
                            Array<Array<IndexExpr>> q_params, String layer_name) {
   auto attrs = make_object<QnnCSISegmentAttrs>();
-  attrs->length = std::move(length);
+  attrs->num_segments = std::move(num_segments);
   attrs->out_dtype = out_dtype;
   attrs->q_params = std::move(q_params);
   attrs->layer_name = std::move(layer_name);
@@ -165,10 +165,10 @@ RELAY_REGISTER_OP("qnn.csi.segment_mean")
 TVM_REGISTER_GLOBAL("relay.qnn.op._make.CSISegmentMean").set_body_typed(MakeQnnCSISegmentMean);
 
 // QNN segment prod operator.
-Expr MakeQnnCSISegmentProd(Expr data, Expr segment_ids, int32_t length, DataType out_dtype,
+Expr MakeQnnCSISegmentProd(Expr data, Expr segment_ids, int32_t num_segments, DataType out_dtype,
                            Array<Array<IndexExpr>> q_params, String layer_name) {
   auto attrs = make_object<QnnCSISegmentAttrs>();
-  attrs->length = std::move(length);
+  attrs->num_segments = std::move(num_segments);
   attrs->out_dtype = out_dtype;
   attrs->q_params = std::move(q_params);
   attrs->layer_name = std::move(layer_name);
@@ -197,10 +197,10 @@ RELAY_REGISTER_OP("qnn.csi.segment_prod")
 TVM_REGISTER_GLOBAL("relay.qnn.op._make.CSISegmentProd").set_body_typed(MakeQnnCSISegmentProd);
 
 // QNN segment sum operator.
-Expr MakeQnnCSISegmentSum(Expr data, Expr segment_ids, int32_t length, DataType out_dtype,
+Expr MakeQnnCSISegmentSum(Expr data, Expr segment_ids, int32_t num_segments, DataType out_dtype,
                           Array<Array<IndexExpr>> q_params, String layer_name) {
   auto attrs = make_object<QnnCSISegmentAttrs>();
-  attrs->length = std::move(length);
+  attrs->num_segments = std::move(num_segments);
   attrs->out_dtype = out_dtype;
   attrs->q_params = std::move(q_params);
   attrs->layer_name = std::move(layer_name);

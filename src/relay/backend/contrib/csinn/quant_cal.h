@@ -44,6 +44,9 @@ struct QConfig_ {
   string activate_quantized_type;
   string weight_quantized_type;
   bool fuse_zp2bias;
+  string calibrate_mode;
+  double high_bound_scale;
+  double low_bound_scale;
 };
 
 class QuantCalculator {
@@ -57,7 +60,7 @@ class QuantCalculator {
   bool IsIntegralOrNot(string const_kind, string quantization_scheme);
   void GetMultiplierAndShift(double double_multiplier, int32_t* multiplier, int32_t* shift);
   virtual void GetAsymScale(float min_value, float max_value, int bits, Qinfo* qinfo, string dtype);
-  virtual void GetSymScale(float min_value, float max_value, int bits, Qinfo* qinfo);
+  virtual void GetSymScale(float min_value, float max_value, int bits, Qinfo* qinfo, QConfig_* cfg);
   QuantParams* GetQuantParamsBase(float scale, int32_t zp);
   QuantParams* GetQuantParamsBase(float min_value, float max_value, int32_t tensor_type,
                                   QConfig_* quantize_cfg);

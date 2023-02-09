@@ -393,7 +393,7 @@ RELAY_REGISTER_OP("qnn.csi.erf")
     .add_type_rel("QnnCSIErfRel", QnnCSIElemwiseRel)
     .set_attr<TOpPattern>("TOpPattern", kOpaque);
 
-TVM_REGISTER_GLOBAL("relay.qnn.op._make.CSIErf").set_body_typed(MakeQnnCSIAtanh);
+TVM_REGISTER_GLOBAL("relay.qnn.op._make.CSIErf").set_body_typed(MakeQnnCSIErf);
 
 Expr MakeQnnCSISqrt(Expr data, DataType out_dtype, Array<Array<IndexExpr>> q_params,
                     String layer_name) {

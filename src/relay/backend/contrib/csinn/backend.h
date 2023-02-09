@@ -107,6 +107,21 @@ class Expr : public RelayExpr {
     auto data = static_cast<ExprNode*>(data_.get());
     data->next_expr_.push_back(e);
   }
+
+  void push_next_expr(ExprNode* e, uint index) {
+    auto data = static_cast<ExprNode*>(data_.get());
+
+    if (index >= data->next_expr_.size()) {
+      std::vector<ExprNode*> new_next_expr_(index + 1, NULL);
+
+      for (uint i = 0; i < data->next_expr_.size(); i++) {
+        new_next_expr_[i] = data->next_expr_[i];
+      }
+      data->next_expr_ = new_next_expr_;
+    }
+
+    data->next_expr_[index] = e;
+  }
   ExprNode* operator->() { return static_cast<ExprNode*>(data_.get()); }
   ExprNode* get() { return operator->(); }
   TVM_DEFINE_OBJECT_REF_METHODS(Expr, RelayExpr, ExprNode);

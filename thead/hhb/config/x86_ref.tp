@@ -17,7 +17,7 @@
  * under the License.
  */
 
-/* auto generate by HHB_VERSION "2.1.x" */
+/* auto generate by HHB_VERSION "2.4.0" */
 
 #_hhb_header_files_#
 
@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
     struct csinn_tensor* input_tensors[input_num];
     #_tensor_shape_#
     float *inputf[input_num];
-    char filename_prefix[FILE_LENGTH] = {0};
+    char filename_prefix[FILE_PREFIX_LENGTH] = {0};
     uint64_t start_time, end_time;
     for (i = 0; i < input_group_num; i++) {
         /* set input */
@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
         printf("Run graph execution time: %.5fms, FPS=%.2f\n", ((float)(end_time-start_time))/1000000,
                     1000000000.0/((float)(end_time-start_time)));
 
-        snprintf(filename_prefix, FILE_LENGTH, "%s", basename(data_path[i * input_num]));
+        snprintf(filename_prefix, FILE_PREFIX_LENGTH, "%s", basename(data_path[i * input_num]));
         postprocess(sess, filename_prefix);
 
         for (int j = 0; j < input_num; j++) {

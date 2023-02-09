@@ -72,7 +72,7 @@ def hhb_codegen(hhb_ir, config):
     ----------
     hhb_ir : HHBIRBase
         HHB ir wrapper that holds module and params
-    config : HHBConfig
+    config : Config
         All config for HHB
 
     Returns
@@ -256,6 +256,10 @@ def driver_codegen(args_filter: ArgumentFilter):
         quantize_config = board_qnn_codegen_ir.get_quant_env(
             os.path.join(args.FILE, qnn_ir.info_file)
         )
+        if args.board == "th1520" and (
+            args.hybrid_computing or quantize_config["auto_hybrid_quantization"]
+        ):
+            args.board = "hth1520"
 
         quantize_config["h_max_out_channel"] = args.hardware_max_out_channel
         quantize_config["h_max_kernel_size"] = args.hardware_max_kernel_size

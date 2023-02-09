@@ -1502,14 +1502,14 @@ struct QnnCSISplitAttrs : public tvm::AttrsNode<QnnCSISplitAttrs> {
 };
 
 struct QnnCSISegmentAttrs : public tvm::AttrsNode<QnnCSISegmentAttrs> {
-  int32_t length;
+  int32_t num_segments;
   // Quantization related attributes.
   DataType out_dtype;
   Array<Array<IndexExpr>> q_params;
   String layer_name;
 
   TVM_DECLARE_ATTRS(QnnCSISegmentAttrs, "relay.attrs.QnnCSISegmentAttrs") {
-    TVM_ATTR_FIELD(length).describe("The length of output.");
+    TVM_ATTR_FIELD(num_segments).describe("The length of output.");
     TVM_ATTR_FIELD(out_dtype).describe(
         "Output data type, set to explicit type under mixed precision setting.");
     TVM_ATTR_FIELD(q_params).describe("Quantization related attributes.");

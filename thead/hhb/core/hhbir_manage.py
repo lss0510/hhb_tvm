@@ -22,6 +22,7 @@ from abc import ABC
 from abc import abstractmethod
 import yaml
 import shutil
+import glob
 
 import tvm
 from tvm import relay
@@ -141,33 +142,67 @@ def reorder_pixel_format(mod, params):
         The modified parameter dict to be used by relay
     """
 
-    class InnerVisitor(relay.ExprVisitor):
-        """Counting the number of call"""
+    def _impl_v1(mod, params):
+        """Weights/biases are not embedded into relay."""
 
-        def __init__(self):
-            super(InnerVisitor, self).__init__()
-            self.weight_name = []
+        class InnerVisitor(relay.ExprVisitor):
+            """Counting the number of call"""
 
-        def visit_call(self, call):
-            _ = [self.visit(arg) for arg in call.args]
+            def __init__(self):
+                super(InnerVisitor, self).__init__()
+                self.weight_name = []
 
-            pre_call = call.args[0]
-            if call.op.name == "nn.conv2d" and isinstance(pre_call, relay.expr.Var):
+            def visit_call(self, call):
+                _ = [self.visit(arg) for arg in call.args]
 
-                weight = call.args[1]
-                self.weight_name.append(weight.name_hint)
+                pre_call = call.args[0]
+                if call.op.name == "nn.conv2d" and isinstance(pre_call, relay.expr.Var):
 
-    iv = InnerVisitor()
-    iv.visit(mod["main"])
-    to_change = iv.weight_name
+                    weight = call.args[1]
+                    self.weight_name.append(weight.name_hint)
 
-    for name in to_change:
-        data = params[name].asnumpy()
-        if data.shape[1] != 3:
-            continue
-        data = data[:, ::-1, :, :]
-        params[name].copyfrom(data)
-    return mod, params
+        iv = InnerVisitor()
+        iv.visit(mod["main"])
+        to_change = iv.weight_name
+
+        for name in to_change:
+            data = params[name].asnumpy()
+            if data.shape[1] != 3:
+                continue
+            data = data[:, ::-1, :, :]
+            params[name].copyfrom(data)
+        return mod, params
+
+    def _impl_v2(mod):
+        """Weights/biases are embedded into relay."""
+
+        class InnerMutator(relay.ExprMutator):
+            """Counting the number of call"""
+
+            def __init__(self):
+                super(InnerMutator, self).__init__()
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+
+                pre_call = op_args[0]
+                if call.op.name == "nn.conv2d" and isinstance(pre_call, relay.expr.Var):
+                    weight = op_args[1]
+                    weight_val = weight.data.asnumpy()
+                    if weight_val.shape[1] == 3:
+                        weight_val = weight_val[:, ::-1, :, :]
+                        weight.data.copyfrom(weight_val)
+                    op_args[1] = weight
+                new_call = relay.expr.Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                return new_call
+
+        mod["main"] = InnerMutator().visit(mod["main"])
+        return mod
+
+    if params:
+        return _impl_v1(mod, params)
+    else:
+        return _impl_v2(mod), params
 
 
 class HHBIRType(object):
@@ -321,6 +356,10 @@ class HHBQNNIR(HHBIRBase):
 
     def get_model(self):
         return self._curr_mod, self._curr_params
+
+    def set_model(self, mod, params=None):
+        self._curr_mod = mod
+        self._curr_params = params
 
     def load_model(self, model_path):
         mod_path = os.path.join(model_path, self.mod_name)
@@ -519,29 +558,10 @@ class HHBX86QnnCodegenIR(HHBIRBase):
         return self._curr_factory
 
     def get_lib(self, output_dir):
-        def _find_install_libs():
-            tvm_package_dir = os.path.dirname(os.path.realpath(tvm.__file__))
-            install_dir = []
-            # TVM is run inplace
-            install_dir.append(os.path.join(tvm_package_dir, "..", "..", "install_nn2"))
-            # TVM is installed
-            install_dir.append(os.path.join(tvm_package_dir, "install_nn2"))
+        _, shl_dir, _, _, _ = find_base_path()
+        include_path = os.path.join(shl_dir, "x86/include")
+        ref_x86_dir = os.path.join(shl_dir, "x86/lib")
 
-            install_dir = [d for d in install_dir if os.path.isdir(d)]
-            if len(install_dir) == 0:
-                raise HHBException("Can not fild install_nn2 libs.")
-            return install_dir[0]
-
-        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-            exec_dir = os.path.dirname(os.path.realpath(sys.executable))
-
-            include_path = os.path.join(exec_dir, "install_nn2", "include")
-            ref_x86_dir = os.path.join(exec_dir, "install_nn2", "lib")
-        else:
-            install_dir = _find_install_libs()
-
-            include_path = os.path.join(install_dir, "include")
-            ref_x86_dir = os.path.join(install_dir, "lib")
         lib_path = os.path.join(output_dir, "quant.so")
         kwargs = {}
         kwargs["options"] = [
@@ -549,7 +569,7 @@ class HHBX86QnnCodegenIR(HHBIRBase):
             "-g",
             "-I" + include_path,
             "-L" + ref_x86_dir,
-            "-lshl_ref_x86",
+            "-lshl",
         ]
         kwargs["cc"] = "gcc"
         lib = self.get_factory().get_lib()
@@ -783,6 +803,7 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
     ):
         from .codegen_manage import (
             main_c_codegen,
+            jit_c_codegen,
             generate_c906_cb_reg,
             generate_rvv_cb_reg,
         )
@@ -794,6 +815,10 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
             dump_file_path = os.path.join(output_path, "cb_rvv.c")
             logger.info("write bc rvv to %s", dump_file_path)
             opks = generate_rvv_cb_reg(False, dump_file_path, q_scheme, opks)
+        elif board in ("th1520", "hth1520", "c920"):
+            jit_c_codegen(
+                self, input_shape, output_shape, board, output_path, preprocess_params, q_scheme
+            )
 
         main_c_codegen(
             self,
@@ -812,6 +837,30 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
             hhb_gen,
         )
 
+        if codegen_config["with_py_wrapper"]:
+            from .codegen_manage import get_execute_path
+
+            exec_dir = get_execute_path()
+            wrapper_dir = os.path.join(exec_dir, "config", "wrapper")
+
+            shutil.copy(os.path.join(wrapper_dir, "model_client.py"), output_path)
+            shutil.copy(os.path.join(wrapper_dir, "model_server.py"), output_path)
+            shutil.copy(os.path.join(wrapper_dir, "model_wrapper.py"), output_path)
+
+            target_path = os.path.join(wrapper_dir, "model_wrapper.tp")
+            with open(target_path, "r") as f:
+                target_data = f.read()
+            if board in ("c906", "rvm", "c908", "c920"):
+                tmp_data = "if (!output->is_const) {\n"
+                tmp_data += " " * 4 + "shl_mem_free(output->data);\n"
+                tmp_data += " " * 2 + "}"
+                target_data = target_data.replace("#_hhb_wrapper_free_output_buf_#", tmp_data)
+            else:
+                target_data = target_data.replace("#_hhb_wrapper_free_output_buf_#", "")
+
+            with open(os.path.join(output_path, "model_wrapper.c"), "w") as f:
+                f.write(target_data)
+
         from .codegen_manage import package_sections
 
         package_sections(board, output_path, model_save)
@@ -819,7 +868,7 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
 
 def base_dir_exists(dir):
     found_dir = os.path.abspath(dir)
-    found_dir = os.path.join(found_dir, "install_nn2/include")
+    found_dir = os.path.join(found_dir, "install_nn2/x86/include")
     if os.path.exists(found_dir) and os.path.isdir(found_dir):
         return found_dir
     else:
@@ -861,14 +910,28 @@ def find_base_path():
     else:
         raise HHBException("Cannot find the executable base dir.\n")
 
+    base_found = os.path.join(os.path.abspath(base_found), "")
+    shl_dir = os.path.join(os.path.abspath(shl_dir), "")
+    prebuilt_dir = os.path.join(os.path.abspath(prebuilt_dir), "")
+    tvm_inc_dir = os.path.join(os.path.abspath(tvm_inc_dir), "")
+    dlpack_inc_dir = os.path.join(os.path.abspath(dlpack_inc_dir), "")
     return base_found, shl_dir, prebuilt_dir, tvm_inc_dir, dlpack_inc_dir
 
 
 @hhb_ir_helper
 class HHBBoardBuildRuntime:
-    def __init__(self, board, work_dir, intrinsic, android=False):
+    def __init__(self, board, work_dir, intrinsic=False, link_lib="unset", android=False):
+        self.board = board
         self.work_dir = work_dir
         self.intrinsic = intrinsic
+        self.jit = False
+
+        self.source_name = []
+        self.runtime_name = ""
+        self.jit_name = ""
+
+        if board in ("th1520", "hth1520", "th1520_x86", "c920"):
+            self.jit = True
 
         self.cflag = " -O2 -g "
 
@@ -880,7 +943,7 @@ class HHBBoardBuildRuntime:
                 raise HHBException("Please upgrade compiler version.\n")
 
             self.cflag += "-mabi=lp64d "
-        elif board in ("x86_ref"):
+        elif board in ("x86_ref", "th1520_x86"):
             self.compiler = "gcc"
         else:
             raise HHBException("Unsupport platform build: {}.\n".format(board))
@@ -889,44 +952,54 @@ class HHBBoardBuildRuntime:
 
         logger.info("HHB base dir: %s", hhb_base_dir)
 
-        self.include_dir = " -I" + shl_dir + "include " + " -I" + dlpack_dir
+        # all target have same include with x86
+        self.include_dir = " -I" + shl_dir + "x86/include " + " -I" + dlpack_dir
 
         self.include_dir += " -I" + tvm_inc_dir + " "
 
-        self.link_flag = " -Wl,--gc-sections -L " + shl_dir + "lib/ "
+        self.link_flag = " -Wl,--gc-sections "
+        # reuse cflag in link, but no -march
+        self.link_flag += self.cflag
 
-        if board == "th1520":
+        if board in ("th1520", "hth1520"):
             self.link_flag += " -Wl,-unresolved-symbols=ignore-in-shared-libs "
-            self.link_flag += " -lshl_pnna "
-        elif board == "hth1520":
+            self.link_flag += " -L " + shl_dir + "th1520/lib/ -lshl "
+        elif board == "th1520_x86":
             self.link_flag += " -Wl,-unresolved-symbols=ignore-in-shared-libs "
-            self.link_flag += " -lshl_hlight "
+            self.link_flag += " -L " + shl_dir + "pnna_x86/lib/ -lshl_pnna_x86 "
         elif board == "rvm":
-            self.link_flag += " -lshl_rvm -static "
+            self.link_flag += " -L " + shl_dir + "rvm/lib/ -lshl_rvm -static "
         elif board == "c906":
-            self.link_flag += " -lshl_c906 -static "
+            self.link_flag += " -L " + shl_dir + "c906/lib/ -lshl -static "
             self.cflag += " -march=rv64gcv0p7_zfh_xtheadc "
         elif board == "c908":
-            self.link_flag += " -lshl_c908 -static "
+            self.link_flag += " -L " + shl_dir + "c908/lib/ -lshl -static "
         elif board == "c920":
-            self.link_flag += " -lshl_c920 -static "
+            if link_lib in ("unset", "shl_c920"):
+                self.link_flag += " -L " + shl_dir + "c920/lib/ -lshl -static "
+            elif link_lib == "shl_th1520":
+                self.link_flag += " -Wl,-unresolved-symbols=ignore-in-shared-libs "
+                self.link_flag += " -L " + shl_dir + "th1520/lib/ -lshl "
+            else:
+                raise HHBException("Unsupport link {} for c920.\n".format(link_lib))
             self.cflag += " -march=rv64gcv0p7_zfh_xtheadc "
         elif board == "x86_ref":
-            self.link_flag += " -lshl_ref_x86 "
+            self.link_flag += " -L " + shl_dir + "x86/lib/ -lshl "
         else:
-            self.link_flag += " -lshl_rvv -static "
+            raise HHBException("Unsupport platform build: {}.\n".format(board))
 
         self.include_dir += " -I " + prebuilt_dir + "runtime/cmd_parse"
-        decode_dir = " -L " + prebuilt_dir + "decode/install/lib/rv"
         if android:
             runtime_dir = " -L " + prebuilt_dir + "runtime/riscv_android"
         else:
             if board in ("c906", "c908", "c920", "rvm", "th1520", "hth1520"):
+                decode_dir = " -L " + prebuilt_dir + "decode/install/lib/rv"
                 runtime_dir = " -L " + prebuilt_dir + "runtime/riscv_linux"
             else:
+                decode_dir = " -L " + prebuilt_dir + "decode/install/lib/x86"
                 runtime_dir = " -L " + prebuilt_dir + "runtime/x86_linux"
 
-        if board in ("c906", "c908", "c920", "rvm", "th1520", "hth1520"):
+        if board in ("c906", "c908", "c920", "rvm", "th1520", "hth1520", "th1520_x86"):
             self.link_flag += (
                 decode_dir + runtime_dir + " -lprebuilt_runtime -ljpeg -lpng -lz -lstdc++ -lm "
             )
@@ -947,6 +1020,7 @@ class HHBBoardBuildRuntime:
             + " -c -o "
             + self.prefix_path(source_name + ".o")
         )
+        self.source_name.append(source_name)
         return cmd_line
 
     def build_c(self):
@@ -956,19 +1030,26 @@ class HHBBoardBuildRuntime:
         cmd = self.csource_command_line("model")
         logger.info(cmd)
         os.system(cmd)
+
+        if self.jit:
+            cmd = self.csource_command_line("jit")
+            logger.info(cmd)
+            os.system(cmd)
+
         if self.intrinsic:
             cmd = self.csource_command_line("intrinsic")
             logger.info(cmd)
             os.system(cmd)
 
-    def link_elf(self):
+    def link_elf(self, runtime_name="hhb_runtime", jit_name="hhb_jit"):
+        self.runtime_name = runtime_name
+        self.jit_name = jit_name
         cmd_line = (
             self.compiler
             + self.prefix_path("model.o")
             + self.prefix_path("main.o")
-            + self.cflag
             + " -o "
-            + self.prefix_path("hhb_runtime")
+            + self.prefix_path(runtime_name)
         )
         if self.intrinsic:
             cmd_line += self.prefix_path("intrinsic.o")
@@ -976,6 +1057,176 @@ class HHBBoardBuildRuntime:
         cmd_line += self.link_flag
         logger.info(cmd_line)
         os.system(cmd_line)
+
+        if self.jit:
+            cmd_line = (
+                self.compiler
+                + self.prefix_path("model.o")
+                + self.prefix_path("jit.o")
+                + " -o "
+                + self.prefix_path(jit_name)
+            )
+            cmd_line += self.link_flag
+            logger.info(cmd_line)
+            os.system(cmd_line)
+
+    def generate_makefile(self):
+        """Generate corresponding makefile."""
+        from .codegen_manage import get_execute_path
+
+        exec_dir = get_execute_path()
+        tp_path = os.path.join(exec_dir, "config", "template", "makefile.tp")
+
+        #######################################################################
+        #
+        # Generate compiler
+        #
+        with open(tp_path, "r") as f:
+            makefile_data = f.read()
+        makefile_data = makefile_data.replace("#_hhb_makefile_compiler_#", self.compiler)
+
+        #######################################################################
+        #
+        # Generate include
+        #
+        self.include_dir += " -I."
+        include_data = ""
+        if self.include_dir:
+            include_data = self.include_dir.strip().split(" ")
+            include_data = [i for i in include_data if i]
+            include_data = " \\\n\t".join(include_data)
+        makefile_data = makefile_data.replace("#_hhb_makefile_include_#", include_data)
+
+        #######################################################################
+        #
+        # Generate cflags
+        #
+        makefile_data = makefile_data.replace("#_hhb_makefile_cflag_#", self.cflag + "${INCLUDE}")
+
+        #######################################################################
+        #
+        # Generate ldflags
+        #
+        ld_data = self.link_flag.strip().split(" ")
+        ld_data = list(filter(lambda x: x, ld_data))
+        ld_data_p1 = []
+        ld_data_p2 = []
+        idx = 0
+        while idx < len(ld_data):
+            if ld_data[idx] == "-L":
+                ld_data_p1.extend([ld_data[idx], ld_data[idx + 1]])
+                idx += 2
+            else:
+                ld_data_p2.append(ld_data[idx])
+                idx += 1
+        p1_str = ""
+        for i in range(len(ld_data_p1) // 2):
+            p1_str += ld_data_p1[2 * i] + ld_data_p1[2 * i + 1] + " \\\n\t"
+        makefile_data = makefile_data.replace("#_hhb_makefile_ldflag1_#", p1_str)
+        p2_str = " ".join(ld_data_p2)
+        makefile_data = makefile_data.replace("#_hhb_makefile_ldflag2_#", p2_str)
+
+        #######################################################################
+        #
+        # Generate objects
+        #
+        obj_data = ""
+        if self.source_name:
+            for sf in self.source_name:
+                curr_obj = f"{sf}.o: {sf}.c\n"
+                curr_obj += "\t$(CC) $(CFLAGS) -c -o $@  $^\n"
+
+                obj_data += curr_obj + "\n"
+        obj_data = obj_data.rstrip()
+        makefile_data = makefile_data.replace("#_hhb_makefile_compile_obj_#", obj_data)
+
+        #######################################################################
+        #
+        # Generate elf
+        #
+        elf_data = f"{self.runtime_name}: main.o model.o"
+        if self.intrinsic:
+            elf_data += " intrinsic.o"
+        elf_data += "\n"
+        elf_data += "\t$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)\n"
+
+        if self.jit:
+            elf_data += "\n"
+            elf_data += f"{self.jit_name}: jit.o model.o\n"
+            elf_data += "\t$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)\n"
+        elf_data = elf_data.rstrip()
+        makefile_data = makefile_data.replace("#_hhb_makefile_elf_#", elf_data)
+
+        #######################################################################
+        #
+        # Generate clean
+        #
+        clean_data = f"-rm *.o {self.runtime_name}"
+        if self.jit:
+            clean_data += f" {self.jit_name}"
+        makefile_data = makefile_data.replace("#_hhb_makefile_clean_#", clean_data)
+
+        #######################################################################
+        #
+        # Generate python wrapper
+        #
+        wrapper_data = ""
+        if (
+            os.path.exists(os.path.join(self.work_dir, "model_wrapper.c"))
+            and self.board != "th1520_x86"
+        ):
+            wrapper_data = "libmodel_wrapper.so: model_wrapper.c model.c io.c\n"
+            wrapper_data += "\t$(CC) $(CFLAGS) -fPIC -shared -o $@ $^ $(LDFLAGS)\n"
+        makefile_data = makefile_data.replace("#_hhb_makefile_py_wrapper_#", wrapper_data)
+
+        #######################################################################
+        #
+        # Generate target
+        #
+        target_data = self.runtime_name
+        if self.jit:
+            target_data += " " + self.jit_name
+        makefile_data = makefile_data.replace("#_hhb_makefile_default_target_#", target_data)
+
+        #######################################################################
+        #
+        # Generate simulation exectution
+        #
+        sim_exec_data = ""
+        if self.board in ("x86_ref", "c906", "c908", "c920", "th1520_x86"):
+            if self.board == "th1520_x86":
+                _, shl_dir, _, _, _ = find_base_path()
+                sim_exec_data += "NNA_DDK_DIR ?=\n"
+                sim_exec_data += (
+                    f"export LD_LIBRARY_PATH=${{NNA_DDK_DIR}}/x86:{os.path.join(shl_dir, 'lib')}\n"
+                )
+                sim_exec_data += "export SIM_VISION_PATH=${NNA_DDK_DIR}/x86/sim_nna.so\n"
+            sim_exec_data += f"run_sim: {self.runtime_name}\n"
+            input_data = glob.glob(os.path.join(self.work_dir, "*.bin"))
+            input_data = list(map(lambda x: os.path.basename(x), input_data))
+            if "graph_info.bin" in input_data:
+                input_data.remove("graph_info.bin")
+            if not input_data:
+                input_data = ["data.0.bin"]
+            input_data = sorted(input_data)
+
+            exec_prefix = ""
+            if self.board == "c906":
+                exec_prefix += "qemu-riscv64 -cpu c906fdv "
+            elif self.board == "c908":
+                exec_prefix += "qemu-riscv64 -cpu c908v "
+            elif self.board == "c920":
+                exec_prefix += "qemu-riscv64 -cpu c920 "
+            sim_exec_data += f"\t{exec_prefix}./{self.runtime_name} hhb.bm {' '.join(input_data)}\n"
+
+            if self.board == "th1520_x86" and self.jit:
+                sim_exec_data += f"\nrun_jit: {self.jit_name}\n"
+                sim_exec_data += f"\t./{self.jit_name} hhb.bm\n"
+        makefile_data = makefile_data.replace("#_hhb_makefile_run_sim_#", sim_exec_data)
+
+        target_path = os.path.join(self.work_dir, f"makefile.{self.board}")
+        with open(target_path, "w") as f:
+            f.write(makefile_data)
 
 
 def guess_ir_type(file_path):
@@ -994,6 +1245,8 @@ def guess_ir_type(file_path):
     """
     hhb_ir_type = []
     for h in HHB_IR:
+        if h == HHBBoardBuildRuntime:
+            continue
         hhb_ir_obj = h()
         hhb_ir_type.append(int(hhb_ir_obj.check_ir_type(file_path)))
 

@@ -66,13 +66,21 @@ def inference_model(graph_module, data_loader: DatasetLoader, postprocess="top5"
             elif postprocess == "save":
                 output_dir = ensure_dir(output_dir)
                 np.savetxt(
-                    os.path.join(output_dir, output_prefix), out, delimiter="\n", newline="\n"
+                    os.path.join(output_dir, output_prefix),
+                    out,
+                    fmt="%f",
+                    delimiter="\n",
+                    newline="\n",
                 )
             else:
                 print_top5(out, str(i), out_shape)
                 output_dir = ensure_dir(output_dir)
                 np.savetxt(
-                    os.path.join(output_dir, output_prefix), out, delimiter="\n", newline="\n"
+                    os.path.join(output_dir, output_prefix),
+                    out,
+                    fmt="%f",
+                    delimiter="\n",
+                    newline="\n",
                 )
         index += 1
 
@@ -102,7 +110,13 @@ def inference_elf(elf_file, dataset, input_name_list, all_file_path, output_dir=
         command_line = command_line_base
         data_count = 0
         for k in input_name_list:
-            input_name = all_file_path[index]
+            if len(all_file_path) == 1:
+                if index == 0:
+                    input_name = all_file_path[0]
+                else:
+                    input_name = all_file_path[0] + "_" + str(index)
+            else:
+                input_name = all_file_path[index]
             v = data[k]
             v = v.astype("float32")
             file = os.path.basename(input_name) + ".{}.bin".format(data_count)

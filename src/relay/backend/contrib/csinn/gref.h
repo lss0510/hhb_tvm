@@ -39,8 +39,13 @@ class CodegenGref : public CodegenCSINN {
   virtual string get_ccode(void);
   virtual void EmitNBGSetup(void);
 
-  void SessionRunMode() { func_def_.OneLine("sess->base_run_mode = CSINN_RM_CPU_GRAPH;"); }
-  // virtual bool IsIntegralOrNot(string const_kind);
+  void SessionRunMode() {
+    if (auto_hybrid_quantization) {
+      func_def_.OneLine("sess->base_run_mode = CSINN_RM_CPU_BASE_HYBRID;");
+    } else {
+      func_def_.OneLine("sess->base_run_mode = CSINN_RM_CPU_GRAPH;");
+    }
+  }
 };
 
 class CodegenHGref : public CodegenGref {};

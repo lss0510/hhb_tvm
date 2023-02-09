@@ -17,7 +17,7 @@
  * under the License.
  */
 
-/* auto generate by HHB_VERSION "2.2.0" */
+/* auto generate by HHB_VERSION "2.4.0" */
 
 #ifndef PROCESS_H_
 #define PROCESS_H_

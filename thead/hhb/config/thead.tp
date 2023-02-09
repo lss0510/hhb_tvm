@@ -17,7 +17,7 @@
  * under the License.
  */
 
-/* auto generate by HHB_VERSION "2.2.0" */
+/* auto generate by HHB_VERSION "2.4.0" */
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -68,18 +68,16 @@ int main(int argc, char **argv) {
     int input_group_num = 1;
     int i;
 
-    if (argc < (2 + input_num)) {
-        printf("Please set valide args: ./model.elf model.params "
-                "[tensor1/image1 ...] [tensor2/image2 ...]\n");
-        return -1;
+    if (argc == 3 && get_file_type(argv[2]) == FILE_TXT) {
+        data_path = read_string_from_file(argv[2], &input_group_num);
+        input_group_num /= input_num;
+    } else if (argc >= (2 + input_num)) {
+        data_path = argv + 2;
+        input_group_num = (argc - 2) / input_num;
     } else {
-        if (argc == 3 && get_file_type(argv[2]) == FILE_TXT) {
-            data_path = read_string_from_file(argv[2], &input_group_num);
-            input_group_num /= input_num;
-        } else {
-            data_path = argv + 2;
-            input_group_num = (argc - 2) / input_num;
-        }
+        printf("Please set valide args: ./model.elf hhb.bm "
+                "[data1 data2 ...]|[.txt]\n");
+        return -1;
     }
 
     params_path = argv[1];

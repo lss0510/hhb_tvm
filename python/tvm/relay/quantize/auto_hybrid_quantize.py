@@ -561,18 +561,20 @@ def load_lib(module_factory, output_dir):
     contrib_dir = os.path.dirname(os.path.realpath(os.path.expanduser(__file__)))
     contrib_dir = os.path.realpath(os.path.join(contrib_dir, "..", "..", ".."))
     source_dir = os.path.join(contrib_dir, "..")
-    include_path = os.path.join(source_dir, "install_nn2", "include")
-    ref_x86_dir0 = os.path.join(source_dir, "install_nn2", "lib")  # for source
-    ref_x86_dir1 = os.path.join(contrib_dir, "install_nn2", "lib")  # for package binary
+    include_path0 = os.path.join(source_dir, "install_nn2", "x86", "include")
+    include_path1 = os.path.join(contrib_dir, "hhb", "install_nn2", "x86", "include")
+    ref_x86_dir0 = os.path.join(source_dir, "install_nn2", "x86", "lib")  # for source
+    ref_x86_dir1 = os.path.join(contrib_dir, "hhb", "install_nn2", "x86", "lib")  # for package binary
     lib_path = os.path.join(output_dir, "quant.so")
     kwargs = {}
     kwargs["options"] = [
         "-O2",
         "-g",
-        "-I" + include_path,
+        "-I" + include_path0,
+        "-I" + include_path1,
         "-L" + ref_x86_dir0,
         "-L" + ref_x86_dir1,
-        "-lshl_ref_x86",
+        "-lshl",
     ]
     kwargs["cc"] = "gcc"
     lib = module_factory.get_lib()

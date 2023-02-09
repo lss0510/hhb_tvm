@@ -37,7 +37,7 @@ namespace csinn {
 
 class TH1520QuantCalculator : public QuantCalculator {
  public:
-  void GetSymScale(float min_value, float max_value, int bits, Qinfo* qinfo) {
+  void GetSymScale(float min_value, float max_value, int bits, Qinfo* qinfo, QConfig_* cfg) {
     int valid_range = std::pow(2, bits - 1) - 1;
     float abs_max = std::max(std::abs(min_value), std::abs(max_value));
     float scale = valid_range / abs_max;
@@ -52,6 +52,18 @@ class TH1520QuantCalculator : public QuantCalculator {
 
 class CodegenTH1520 : public CodegenGref {
  public:
+  CodegenTH1520() {
+    if (cfg->quantization_scheme == "CSINN_QUANT_INT8_SYM" ||
+        cfg->quantization_scheme == "CSINN_QUANT_INT16_SYM") {
+      cfg->dtype_activation = "float";
+      cfg->dtype_input = "float";
+      cfg->dtype_weight = "float";
+      cfg->weight_quantized_type = "sym";
+      cfg->activate_quantized_type = "sym";
+      base_dtype_ = "CSINN_DTYPE_FLOAT32";
+    }
+  }
+
   virtual void VisitExpr_(const CallNode* call);
 
   void ModelBinarySave();
@@ -60,6 +72,7 @@ class CodegenTH1520 : public CodegenGref {
   void EmitJitWrapper(void);
   void EmitNBGSetup(void);
   string get_ccode(void);
+  void SessionRunMode() { func_def_.OneLine("sess->base_run_mode = CSINN_RM_NPU_GRAPH;"); }
 
   void phase1() final;
 };

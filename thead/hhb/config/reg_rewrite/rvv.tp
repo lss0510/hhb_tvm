@@ -17,7 +17,7 @@
  * under the License.
  */
 
-/* auto generate by HHB_VERSION "2.1.x" */
+/* auto generate by HHB_VERSION "2.4.0" */
 
 #include <shl_thead_rvv.h>
 

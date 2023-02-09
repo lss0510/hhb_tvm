@@ -45,6 +45,7 @@ class CodegenAnole : public CodegenGref {
   virtual void Flatten(const CallNode* call);
   virtual void Squeeze(const CallNode* call);
   virtual void Reshape(const CallNode* call);
+  void SessionRunMode() { func_def_.OneLine("sess->base_run_mode = CSINN_RM_NPU_GRAPH;"); }
 };
 
 }  // namespace csinn
