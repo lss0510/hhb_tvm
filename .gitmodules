@@ -16,3 +16,9 @@
 [submodule "3rdparty/cutlass"]
 	path = 3rdparty/cutlass
 	url = https://github.com/NVIDIA/cutlass.git
+[submodule "thead/prebuilt/decode"]
+	path = thead/prebuilt/decode
+	url = https://github.com/zhangwm-pt/hhb-prebuilt-decode.git
+[submodule "thead/prebuilt/runtime"]
+	path = thead/prebuilt/runtime
+	url = https://github.com/zhangwm-pt/hhb-prebuilt-runtime.git
