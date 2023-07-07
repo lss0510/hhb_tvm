@@ -44,7 +44,7 @@ All arguments are listed as follows:
 | -on, --output-name | None | None | Set the name of output nodes. Multiple shapes are separated by semicolon(;). |
 | --model-format | ['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe'] | None | Specify input model format:['keras', 'onnx', 'pb', 'tflite', 'pytorch', 'caffe'] |
 | --reorder-pixel-format | None | False | If original model's input data pixel format is rgb, then covert it to bgr;otherwise, then convert it to rgb. |
-| --board | ['anole', 'th1520', "e907", 'c906', 'c908', 'c920', 'x86_ref', 'unset'] | unset | Set target device, default is anole. |
+| --board | ['th1520', "e907", 'c906', 'c908', 'c920', "c920v2", 'x86_ref', 'unset'] | unset | Set target device, default is unset. |
 | -cd, --calibrate-dataset | None | None | Provide with dataset for the input of model in reference step. Support dir or .npz .jpg .png .JPEG or .txt in which there are path of images. Note: only one image path in one line if .txt. |
 | --quantization-scheme | ['int4_asym_w_sym', 'uint8_asym', 'int8_asym', 'int8_sym', 'int8_original', 'int8_asym_w_sym', 'int16_sym', 'float16', 'bfloat16', 'float32', 'unset'] | unset | Scheme of quantization. default is unset, and select scheme by --board. |
 | --auto-hybrid-quantization | None | False | If set, quantize model automatically. |
@@ -55,7 +55,6 @@ All arguments are listed as follows:
 | --hybrid-layer-name | None | None | Layer buffer name to use hybrid quantization. |
 | --fuse-conv-relu | None | False | Fuse the convolution and relu layer. |
 | --fuse-reshape-dense | None | False | Fuse the reshape and dense layer. |
-| --channel-quantization | None | False | Do quantizetion across channel. |
 | --broadcast-quantization | None | False | Broadcast quantization parameters for special ops. |
 | --fuse-clip | None | False | Fuse clip's attr into pre layer's quantitative information. This flag is only valid when quantization is used. |
 | --fuse-zp2bias | None | False | Merge conv2d/dense zp to bias. |
@@ -126,12 +125,11 @@ All arguments are listed as follows:
 | --hybrid-layer-name | None | None | Layer buffer name to use hybrid quantization. |
 | --fuse-conv-relu | None | False | Fuse the convolution and relu layer. |
 | --fuse-reshape-dense | None | False | Fuse the reshape and dense layer. |
-| --channel-quantization | None | False | Do quantizetion across channel. |
 | --broadcast-quantization | None | False | Broadcast quantization parameters for special ops. |
 | --fuse-clip | None | False | Fuse clip's attr into pre layer's quantitative information. This flag is only valid when quantization is used. |
 | --fuse-zp2bias | None | False | Merge conv2d/dense zp to bias. |
 | --target-layout | ['NCHW', 'NHWC'] | NCHW | Set target layout. |
-| --board | ['anole', 'th1520', "e907", 'c906', 'c908', 'c920', 'x86_ref', 'unset'] | unset | Set target device, default is anole. |
+| --board | ['th1520', "e907", 'c906', 'c908', 'c920', "c920v2", 'x86_ref', 'unset'] | unset | Set target device, default is unset. |
 | --model-save | ['run_only', 'save_only', 'save_and_run'] | run_only | Whether save binary graph or run only. run_only: execute model only, not save binary graph. save_only: save binary graph only. save_and_run: execute and save model. |
 | --model-priority | None | 0 | Set model priority, only for th1520 now. 0 is lowest, 1 is medium, 2 is highest. |
 | --without-preprocess | None | False | Do not generate preprocess codes. |
@@ -154,7 +152,7 @@ All arguments are listed as follows:
 | Arguments | choices | default | Note |
 | ------------|---------|---------| ---- |
 | -h, --help | None | None | show this help message and exit |
-| --board | ['anole', 'th1520', "e907", 'c906', 'c908', 'c920', 'x86_ref', 'unset'] | unset | Set target device, default is anole. |
+| --board | ['th1520', "e907", 'c906', 'c908', 'c920', "c920v2", 'x86_ref', 'unset'] | unset | Set target device, default is unset. |
 | --postprocess | ['top5', 'save', 'save_and_top5'] | top5 | Set the mode of postprocess: 'top5' show top5 of output; 'save' save output to file;'save_and_top5' show top5 and save output to file. Default is top5 |
 | --model-save | ['run_only', 'save_only', 'save_and_run'] | run_only | Whether save binary graph or run only. run_only: execute model only, not save binary graph. save_only: save binary graph only. save_and_run: execute and save model. |
 | --model-priority | None | 0 | Set model priority, only for th1520 now. 0 is lowest, 1 is medium, 2 is highest. |

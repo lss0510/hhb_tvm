@@ -66,6 +66,32 @@ def remove_invalid_symbol(mod, params):
     return mod, params
 
 
+def get_io_info_from_onnx(model_file: str):
+    """Get name and shape info from .onnx file."""
+    import onnx
+
+    onnx_model = onnx.load(model_file)
+    initialize_name = list([name.name for name in onnx_model.graph.initializer])
+
+    def _get_name_shape(io_contain, initialize_name):
+        name = []
+        shape = []
+        for tensor in io_contain:
+            if tensor.name in initialize_name:
+                continue
+            name.append(tensor.name)
+            s = []
+            for dim in tensor.type.tensor_type.shape.dim:
+                s.append(dim.dim_value)
+            shape.append(s)
+        return name, shape
+
+    input_name, input_shape = _get_name_shape(onnx_model.graph.input, initialize_name)
+    output_name, output_shape = _get_name_shape(onnx_model.graph.output, initialize_name)
+
+    return input_name, input_shape, output_name, output_shape
+
+
 class HHBKerasFrontend(KerasFrontend):
     """Keras frontend for HHB."""
 

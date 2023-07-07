@@ -20,8 +20,10 @@ import os
 import json
 
 import tvm
-from tvm.relay.expr import Call
+from tvm import relay
+from tvm.relay.expr import Call, Constant
 from tvm.relay import quantize as qtz
+from tvm.relay.quantize.quantize_hhb import get_quantized_model
 from tvm.relay.quantize.auto_hybrid_quantize import HybridQuantizationInfo
 
 from .common import argument_filter_helper
@@ -34,6 +36,15 @@ from .common import hhb_exit
 # pylint: disable=invalid-name
 LOG = 25
 logger = logging.getLogger("HHB")
+
+
+def convert_per_channel_scheme(quant_scheme):
+    """Get supported per-channel quant scheme."""
+    convert = {
+        "int4_asym": "int4_asym_w_sym",
+        "int8_asym": "int8_asym_w_sym",
+    }
+    return convert[quant_scheme] if quant_scheme in convert else None
 
 
 def update_hybrid_layer(config_dict, output_dir):
@@ -121,7 +132,13 @@ def ignore_layers_from_auto_quant(module, board):
     return limited_layers.op_lists
 
 
+def deprecated_check(args):
+    if args.quantize_config.channel_quantization:
+        logger.error("--channel-quantization is deprecated.")
+
+
 def get_config_dict(args):
+    deprecated_check(args)
     config_dict = {
         "nbit_input": args.quantize_config.num_bit_input,
         "nbit_weight": args.quantize_config.num_bit_weight,
@@ -137,7 +154,6 @@ def get_config_dict(args):
         "fuse_clip": args.quantize_config.fuse_clip,
         "fuse_conv_relu": args.quantize_config.fuse_conv_relu,
         "fuse_reshape_dense": args.quantize_config.fuse_reshape_dense,
-        "channel_quantization": args.quantize_config.channel_quantization,
         "broadcast_quantization": args.quantize_config.broadcast_quantization,
         "channel_quantization_ratio_threshold": args.quantize_config.channel_quantization_ratio_threshold,
         "fuse_mul_before_conv": args.quantize_config.fuse_mul_before_conv,
@@ -167,7 +183,6 @@ def get_config_dict(args):
         "model_priority": args.codegen_config.model_priority,
         "matrix_extension_mlen": args.matrix_extension_mlen,
         "target": args.board,
-        "multi_thread": args.codegen_config.multithread,
         "loss_threshold_type": args.quantize_config.loss_threshold_type,
         "from_quant_file": args.quantize_config.from_quant_file,
         "conv2d_algorithm": args.codegen_config.conv2d_algorithm,
@@ -185,6 +200,15 @@ def get_config_dict(args):
     if args.codegen_config.ahead_of_time == "intrinsic":
         if args.quantize_config.quantization_scheme not in ["float32", "float16"]:
             raise HHBException("--ahead-of-time intrinsic only support float32 or float16.\n")
+
+    if args.quantize_config.quantization_scheme in [
+        "int4_asym_w_sym",
+        "int8_asym_w_sym",
+        "float16_w_int8",
+    ]:
+        config_dict["channel_quantization"] = True
+    else:
+        config_dict["channel_quantization"] = False
 
     return config_dict
 
@@ -208,33 +232,7 @@ def set_quantize_params_by_board(filtered_args, extra=None):
     if not hasattr(filtered_args, "quantize_config"):
         raise HHBException("Please execute 'collect_quantization_config' filter first.\n")
 
-    if filtered_args.board == "anole":
-        new_values = {
-            "num_bit_input": 8,
-            "num_bit_weight": 8,
-            "num_bit_activation": 32,
-            "dtype_input": "uint8",
-            "dtype_weight": "uint8",
-            "dtype_activation": "int32",
-            "calibrate_mode": "maxmin",
-            "weight_quantized_type": "asym",
-            "activate_quantized_type": "asym",
-            "weight_scale": "maxmin",
-            "fuse_conv_relu": False,
-            "fuse_clip": True,
-            "fuse_relu": False,
-            "fuse_reshape_dense": True,
-            "fuse_mul_add_to_conv": True,
-            "channel_quantization": False,
-            "broadcast_quantization": True,
-        }
-        if not filtered_args.quantize_config.quantization_scheme in ("unset", "uint8_asym"):
-            raise HHBException("Anole only support uint8_asym\n")
-        if filtered_args.quantize_config.quantization_scheme == "unset":
-            new_values["quantization_scheme"] = "uint8_asym"
-        if filtered_args.quantize_config.channel_quantization:
-            hhb_exit("Anole unsupport channel quantization.")
-    elif filtered_args.board in ("th1520", "hth1520"):
+    if filtered_args.board in ("th1520", "hth1520"):
         new_values = {
             "num_bit_input": 8,
             "num_bit_weight": 8,
@@ -392,6 +390,27 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         }
         if filtered_args.quantize_config.quantization_scheme == "unset":
             new_values["quantization_scheme"] = "float16"
+    elif filtered_args.board == "c920v2":
+        new_values = {
+            "num_bit_input": 8,
+            "num_bit_weight": 8,
+            "num_bit_activation": 32,
+            "dtype_input": "int8",
+            "dtype_weight": "int8",
+            "dtype_activation": "int32",
+            # "calibrate_mode": "maxmin",
+            "weight_quantized_type": "asym",
+            "activate_quantized_type": "asym",
+            "weight_scale": "maxmin",
+            # "fuse_conv_relu": False,
+            "fuse_relu": False,
+            # "fuse_reshape": False,
+            "fuse_mul_add_to_conv": True,
+            # "channel_quantization": False,
+            # "broadcast_quantization": False,
+        }
+        if filtered_args.quantize_config.quantization_scheme == "unset":
+            new_values["quantization_scheme"] = "int8_asym_w_sym"
     elif filtered_args.board == "x86_ref":
         new_values = {
             "num_bit_input": 8,
@@ -434,21 +453,6 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         }
         if filtered_args.quantize_config.quantization_scheme == "unset":
             new_values["quantization_scheme"] = "int8_asym_w_sym"
-
-    # if filtered_args.board != "x86_ref":
-    #     if (
-    #         filtered_args.quantize_config.hybrid_quantization_scheme != "unset"
-    #         or filtered_args.quantize_config.hybrid_layer_name is not None
-    #     ):
-    #         raise HHBException("Only 'x86_ref' target support for hybrid-quantization.\n")
-
-    if filtered_args.quantize_config.channel_quantization:
-        if filtered_args.quantize_config.broadcast_quantization:
-            if filtered_args.quantize_config.quantization_scheme != "int8_asym_w_sym":
-                raise HHBException(
-                    "--broadcast-quantization can't be set with --channel-quantization while"
-                    "quantization_scheme != int8_asym_w_sym.\n"
-                )
 
     if filtered_args.quantize_config.quantization_scheme == "unset":
         if filtered_args.board == "unset":
@@ -593,6 +597,52 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         )
 
 
+def get_quant_scheme_from_qnn(mod):
+    """Obtain quant_scheme from quantized model."""
+
+    class InterHelper(relay.ExprVisitor):
+        """Internal helper class"""
+
+        def __init__(self):
+            super(InterHelper, self).__init__()
+            self.memo_map = {}
+            self.quant_scheme = set()
+            self.per_channel = False
+
+        def visit_call(self, call):
+            _ = [self.visit(arg) for arg in call.args]
+            if call.op.name == "qnn.quantize":
+                self.quant_scheme.add(call.attrs.out_dtype)
+
+                scale_node = call.args[1]
+                zp_node = call.args[2]
+                if scale_node.data.numpy().size > 1 or zp_node.data.numpy().size > 1:
+                    self.per_channel = True
+            elif call.op.name == "qnn.dequantize":
+                if isinstance(call.args[0], Constant):
+                    self.quant_scheme.add(call.args[0].data.numpy().dtype.name)
+
+    ih = InterHelper()
+    ih.visit(mod["main"])
+
+    # delete bias's dtype
+    dtypes = ih.quant_scheme - set(("int32",))
+    dtype2scheme = {
+        "int4": "int4_asym",
+        "int8": "int8_asym",
+        "uint8": "uint8_asym",
+        "float16": "float16",
+        "float32": "float32",
+    }
+
+    final_scheme = None
+    if len(dtypes) == 1:
+        d = dtypes.pop()
+        if d in dtype2scheme:
+            final_scheme = dtype2scheme[d]
+    return final_scheme, ih.per_channel, ih.quant_scheme
+
+
 def quantize_model(mod, params, qconfig, dataset=None, target="x86_ref"):
     """Quantize the imported relay module.
 
@@ -615,5 +665,9 @@ def quantize_model(mod, params, qconfig, dataset=None, target="x86_ref"):
     with tvm.transform.PassContext(opt_level=3, config={"relay.ext.csinn.options": qconfig}):
         logger.debug("current quantize config:")
         logger.debug(qconfig)
-        qfunc = qtz.quantize_hhb(mod, params, dataset=dataset, target=target)
+        _, _, qnn_dtypes = get_quant_scheme_from_qnn(mod)
+        if qnn_dtypes:
+            qfunc = get_quantized_model(mod, params, target)
+        else:
+            qfunc = qtz.quantize_hhb(mod, params, dataset=dataset, target=target)
     return qfunc

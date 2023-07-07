@@ -35,7 +35,11 @@ from .custom_fusion_pass import (
     fuse_dequantize_op,
 )
 from .convert_to_relay import convert_to_relay
-
+from .qnn_transform import QNNSeparateRepeatedQDQ, QNNFuseQDQ
+from .qnn_transform import QNNTh1520InsertReluBetweenSigmoidAndMul
+from .qnn_transform import QNNCheckValidQuantParams
+from .qnn_transform import QNNTh1520InsertAddBetweenLeakyReluAndAdd
+from .qnn_transform import QNNDumpToJson
 
 from .op_spliter import ConvSpliter
 
@@ -170,48 +174,6 @@ def _check_unsupported_ops(target, model):
         "qnn.quantize",
         "qnn.dequantize",
     ]
-    anole_op_list = [
-        "add",
-        "cast",
-        "clip",
-        "concatenate",
-        "divide",
-        "equal",
-        "exp",
-        "image.resize2d",
-        "mean",
-        "minimum",
-        "multiply",
-        "nn.avg_pool2d",
-        "nn.batch_flatten",
-        "nn.bias_add",
-        "nn.conv2d",
-        "nn.conv2d_transpose",
-        "nn.dense",
-        "nn.global_avg_pool2d",
-        "nn.global_max_pool2d",
-        "nn.leaky_relu",
-        "nn.lrn",
-        "nn.max_pool2d",
-        "nn.max_pool2d_with_argmax",
-        "nn.pad",
-        "nn.prelu",
-        "nn.relu",
-        "nn.softmax",
-        "nn.upsampling",
-        "reshape",
-        "sigmoid",
-        "split",
-        "squeeze",
-        "strided_slice",
-        "subtract",
-        "transpose",
-        "vision.max_pool2d_location",
-        "vision.proposal",
-        "vision.psroipooling",
-        "vision.roi_pool",
-        "vision.unpooling",
-    ]
     th1520_op_list = [
         "add",
         "cast",
@@ -280,13 +242,13 @@ def _check_unsupported_ops(target, model):
 
     op_maps = {
         "x86_ref": x86_op_list,
-        "anole": anole_op_list,
         "th1520": th1520_op_list,
         "e907": x86_op_list,
         "c906": x86_op_list,
         "rvm": x86_op_list,
         "c908": x86_op_list,
         "c920": x86_op_list,
+        "c920v2": x86_op_list,
         "hth1520": x86_op_list,
     }
 
@@ -619,7 +581,8 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
         (target not in ("th1520", "hth1520")) and curr_qconfig.dtype_weight == "float32"
     ):
         if not (
-            target in ("c906", "rvm", "c908", "c920") and curr_qconfig.calibrate_mode == "scale"
+            target in ("c906", "rvm", "c908", "c920", "c920v2")
+            and curr_qconfig.calibrate_mode == "scale"
         ):
             dtype_float = True
 
@@ -745,3 +708,122 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
     logger.info(csi_module["main"])
 
     return csi_module
+
+
+def execute_qnn_pass_with_log(log_str, func, qnn, *arg, **kwargs):
+    """Wrapper for optimization pass"""
+    start_log = "Start " + log_str
+    logger.log(LOG, start_log)
+    res = func(qnn, *arg, **kwargs)
+    logger.debug("Model: %s", qnn["main"])
+    end_log = "End " + log_str
+    logger.log(LOG, end_log)
+    return res
+
+
+def optimization_phase0(module):
+    """Optimization procedures in native relay"""
+    opt_module = check_bn_variance(module)
+
+    call_count = get_count_call(opt_module)
+    opt_seq = [
+        _transform.SimplifyInference(),
+        _transform.DynamicToStatic(),
+        _transform.FoldConstant(),
+        # _transform.FoldScaleAxis(),
+        # _transform.CanonicalizeOps(),
+        # _transform.FoldConstant(),
+        # user-define passes
+        # _transform.SpaceToBatch2AtrousConv(),
+    ]
+    if call_count > 1:
+        opt_seq.insert(2, _transform.SimplifyExpr())
+    optimizer = transform.Sequential(opt_seq)
+    opt_module = optimizer(opt_module)
+    return opt_module
+
+
+def optimization_phase1(module):
+    """Optimization procedures for transformer in relay."""
+    opt_seq = [FuseCacheMatMul(), FuseLayerNormal(), TConv1dAddT(), FuseCacheConv1d()]
+    optimizer = transform.Sequential(opt_seq)
+    opt_module = optimizer(module)
+    return opt_module
+
+
+def optimization_th1520(module):
+    """Optimization procedures for th1520 in qnn."""
+    opt_seq = [
+        QNNTh1520InsertReluBetweenSigmoidAndMul(),
+        QNNTh1520InsertAddBetweenLeakyReluAndAdd(),
+    ]
+    optimizer = transform.Sequential(opt_seq)
+    opt_module = optimizer(module)
+    return opt_module
+
+
+def get_quantized_model(module, params=None, target="x86_ref"):
+    """Convert quantized model into qnn ir.
+
+    Parameters
+    ---------
+    module: Module
+        The original module.
+
+    params : dict of str to NDArray
+        Input parameters to the graph that do not change
+        during inference time. Used for constant folding.
+
+    target : str
+        Target platform.
+
+    Returns
+    -------
+    ret: Function
+        The graph after quantization
+    """
+    curr_qconfig = current_csinn_config()
+    if params:
+        module["main"] = _bind_params(module["main"], params)
+
+    module = execute_qnn_pass_with_log("optimization for native relay", optimization_phase0, module)
+
+    if curr_qconfig.use_custom_fusion:
+        module = execute_qnn_pass_with_log(
+            "optimization for transformer ops", optimization_phase1, module
+        )
+
+    module = execute_qnn_pass_with_log(
+        "save const output", save_const_output, module, os.path.dirname(curr_qconfig.params_path)
+    )
+    _ = _check_unsupported_ops(target, module)
+
+    qnn_module = execute_qnn_pass_with_log("conversion to csinn", convert_to_csi_qnn, module, None)
+
+    qdq_fuse_pass = transform.Sequential([QNNSeparateRepeatedQDQ(), QNNFuseQDQ()])
+    qnn_module = execute_qnn_pass_with_log(
+        "fuse quantize/dequantize nodes into ops", qdq_fuse_pass, qnn_module
+    )
+
+    qnn_module = execute_qnn_pass_with_log("graph fusion for qnn", fuse_layer, qnn_module)
+
+    if target in ("th1520", "hth1520"):
+        # fix acc bug in th1520 npu
+        qnn_module = execute_qnn_pass_with_log(
+            "optimize for th1520", optimization_th1520, qnn_module
+        )
+
+    # final check
+    qnn_module = QNNCheckValidQuantParams(board=target)(qnn_module)
+
+    if logger.level <= logging.DEBUG:
+        json_file = os.path.dirname(curr_qconfig.params_path)
+        json_file = os.path.join(json_file, "model_qnn.json")
+        qnn_module = QNNDumpToJson(json_file)(qnn_module)
+        logger.debug("save qnn ir structure into %s", json_file)
+
+    qnn_module = relay.transform.InferType()(qnn_module)
+    logger.info("Final qnn model:")
+    logger.info(qnn_module["main"])
+
+    return qnn_module

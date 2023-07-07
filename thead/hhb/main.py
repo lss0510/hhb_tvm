@@ -20,6 +20,7 @@ import logging
 import sys
 import os
 import json
+import os
 
 from tvm.relay.quantize.quantize_hhb import detect_quantized_model
 from tvm import relay
@@ -34,6 +35,9 @@ from .core.hhbir_manage import HHBRelayIR, HHBQNNIR, reorder_pixel_format, HHBBo
 from .core.preprocess_manage import hhb_preprocess
 from .core.frontend_manage import insert_preprocess_node
 from .core.profiler_manage import aitrace_options, convert_tvm_trace2python
+from .core.quantization_manage import get_quant_scheme_from_qnn, convert_per_channel_scheme
+from .core.main_command_manage import print_model_info, optimize_model
+from .core.frontend_manage import get_io_info_from_onnx
 from .importer import hhb_import
 from .quantizer import hhb_quantize
 from .codegen import hhb_codegen
@@ -154,6 +158,45 @@ class Compiler(object):
         out = hhb_preprocess(data_path, self.config, is_generator)
         return out
 
+    def optimize(self, opt_tool: str):
+        """Optimize model with specified tool and generate new onnx file.
+
+        Parameters
+        ----------
+        opt_tool : str
+            Optimization tool, current support ppq.
+        """
+        if opt_tool == "ppq":
+            # quantize model with ppq tool
+            print_model_info(
+                self.config.main.model_file.value,
+                self.config.import_config.input_name.value,
+                self.config.import_config.input_shape.value,
+                self.config.import_config.output_name.value,
+                "Before optimization",
+            )
+            ppq_quantized_file = optimize_model(
+                self.config.main.model_file,
+                self.config.quantize.quantization_tool.value,
+                self.config,
+            )
+            # update info
+            input_name, input_shape, output_name, _ = get_io_info_from_onnx(ppq_quantized_file)
+            self.config.import_config.input_name.value = input_name
+            self.config.import_config.input_shape.value = input_shape
+            self.config.import_config.output_name.value = output_name
+            self.config.main.model_file.value = [ppq_quantized_file]
+
+            print_model_info(
+                self.config.main.model_file.value,
+                self.config.import_config.input_name.value,
+                self.config.import_config.input_shape.value,
+                self.config.import_config.output_name.value,
+                "After optimization",
+            )
+        else:
+            raise HHBException(f"Unsupport for too: {opt_tool}\n")
+
     def import_model(
         self,
         path,
@@ -212,28 +255,36 @@ class Compiler(object):
         if self.relay_ir is None:
             raise HHBException("Please import model by import_model() first.")
 
-        detected_quant_type = detect_quantized_model(self.relay_ir.get_model()[0])
-        if detected_quant_type:
-            if len(detected_quant_type) == 1:
-                detected_quant_type = detected_quant_type.pop()
-                if detected_quant_type == "uint8":
-                    self.config.quantize.quantization_scheme.value = "uint8_asym"
-                elif detected_quant_type == "int8":
-                    self.config.quantize.quantization_scheme.value = "int8_asym"
+        quant_scheme, is_per_channel, qnn_dtypes = get_quant_scheme_from_qnn(
+            self.relay_ir.get_model()[0]
+        )
+        if self.config.quantize.quantization_scheme.value == "unset" and qnn_dtypes:
+            # there is quantize/dequantize op in module, so it is a quantized model.
+            logger = logging.getLogger("HHB")
+            if quant_scheme and is_per_channel:
+                coverted_quant_scheme = convert_per_channel_scheme(quant_scheme)
+                if coverted_quant_scheme is None:
+                    raise HHBException(f"Unsupport per-channel quantization for {quant_scheme}\n")
                 else:
-                    raise HHBException(
-                        "Unsupport quantization type:{}.\n".format(detected_quant_type)
+                    self.config.quantize.quantization_scheme.value = coverted_quant_scheme
+                    logger.log(
+                        LOG,
+                        "Detect that current model has been quantized with per-channel {}, "
+                        "then quantization_scheme is set {}".format(
+                            quant_scheme, self.config.quantize.quantization_scheme.value
+                        ),
                     )
-                logger = logging.getLogger("HHB")
+            elif quant_scheme:
+                self.config.quantize.quantization_scheme.value = quant_scheme
                 logger.log(
                     LOG,
-                    "Detect that current model has been quantized with {}, "
-                    "--quantization-scheme will be overwritten to {}".format(
-                        detected_quant_type, self.config.quantize.quantization_scheme.value
-                    ),
+                    "Detect that current model has been quantized with {}, ".format(quant_scheme),
                 )
             else:
-                logger.warning("Detect that there are multi quantization types in model.")
+                raise HHBException(
+                    "Can not infer the quantization scheme from original model, please "
+                    "specify it by --quantization-scheme.\n"
+                )
 
         # update cmd config
         self.config.generate_cmd_config()
@@ -482,6 +533,11 @@ def _main(argv):
 
     # parse command line parameters
     args = parser.parse_args(arg_manage.origin_argv[1:])
+    # save hhb command
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+    with open(os.path.join(args.output, "hhb_origin_cmd.txt"), "w") as f:
+        f.write(" ".join(argv))
     if args.config_file:
         update_arguments_by_file(args, arg_manage.origin_argv[1:])
     args_filter = ArgumentFilter(args)

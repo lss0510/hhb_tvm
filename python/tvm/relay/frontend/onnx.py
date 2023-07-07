@@ -1959,7 +1959,15 @@ class Squeeze(OnnxOpConverter):
     @classmethod
     def _impl_v1(cls, inputs, attr, params):
         axis = attr.get("axes", None)
-        return _op.squeeze(inputs[0], axis)
+        ishape = infer_shape(inputs[0])
+
+        new_axis = []
+        for a in axis:
+            if a < 0:
+                new_axis.append(len(ishape) + a)
+            else:
+                new_axis.append(a)
+        return _op.squeeze(inputs[0], new_axis)
 
     @classmethod
     def _impl_v13(cls, inputs, attr, params):
@@ -3617,11 +3625,11 @@ class Clip(OnnxOpConverter):
 
     @classmethod
     def _impl_v11(cls, inputs, attr, params):
-        if len(inputs) == 3:
+        if len(inputs) == 3 and inputs[2] is not None:
             max_value = infer_value(inputs[2], params)
             attr["max"] = max_value.asnumpy().item()
             inputs = inputs[0:2]
-        if len(inputs) >= 2:
+        if len(inputs) >= 2 and inputs[1] is not None:
             min_value = infer_value(inputs[1], params)
             attr["min"] = min_value.asnumpy().item()
             inputs = inputs[0:1]

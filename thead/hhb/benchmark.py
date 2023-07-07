@@ -164,7 +164,7 @@ def driver_benchmark(args_filter: ArgumentFilter):
                 qnn_ir.get_model(), args.board, args.opt_level, args.output, config_dict
             )
     else:
-        raise HHBException("can not simulate anole, th1520.")
+        raise HHBException("can not simulate th1520.")
 
     ctx = tvm.cpu(0)
     if args.no_quantize:

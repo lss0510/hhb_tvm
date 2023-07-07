@@ -208,7 +208,12 @@ def find_include_path(name=None, search_path=None, optional=False):
         tvm_include_path = [os.path.join(p, "include") for p in header_path]
         dlpack_include_path = [os.path.join(p, "dlpack/include") for p in header_path]
         dmlc_include_path = [os.path.join(p, "dmlc-core/include") for p in header_path]
-        csinn2_include_path = [os.path.join(p, "install_nn2/x86/include") for p in header_path]
+        csinn2_include_path = [
+            os.path.join(p, "install_nn2/x86/include/csinn/") for p in header_path
+        ]
+        csinn2_include_path += [
+            os.path.join(p, "install_nn2/x86/include/shl_public/") for p in header_path
+        ]
 
         # try to find include path
         include_found = [p for p in tvm_include_path if os.path.exists(p) and os.path.isdir(p)]

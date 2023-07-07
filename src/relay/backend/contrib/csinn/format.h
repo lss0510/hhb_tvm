@@ -27,6 +27,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../codegen_c/codegen_c.h"
@@ -258,6 +259,58 @@ struct Qinfo {
   float max;
 };
 
+struct QinfoNode : public Qinfo, public Object {
+ public:
+  QinfoNode() = default;
+  explicit QinfoNode(Qinfo* qinfo) {
+    zero_point = qinfo->zero_point;
+    scale = qinfo->scale;
+    multiplier = qinfo->multiplier;
+    shift = qinfo->shift;
+    min = qinfo->min;
+    max = qinfo->max;
+  }
+
+  void VisitAttrs(AttrVisitor* v) {
+    v->Visit("zero_point", &zero_point);
+    auto scale_f = FloatImm(DataType::Float(32), scale);
+    v->Visit("scale", &scale_f);
+    v->Visit("multiplier", &multiplier);
+    v->Visit("shift", &shift);
+    auto min_f = FloatImm(DataType::Float(32), min);
+    v->Visit("min", &min_f);
+    auto max_f = FloatImm(DataType::Float(32), max);
+    v->Visit("max", &max_f);
+  }
+
+  static constexpr const char* _type_key = "relay.ext.csinn.Qinfo";
+  TVM_DECLARE_FINAL_OBJECT_INFO(QinfoNode, Object);
+
+  friend class QuantParams;
+  friend class QuantParamsRef;
+};
+
+class QinfoRef : public ObjectRef {
+ public:
+  QinfoRef() {
+    auto n = make_object<QinfoNode>();
+    data_ = std::move(n);
+  }
+
+  /*!
+   * \brief Construct from an object pointer.
+   * \param n The object pointer.
+   */
+  explicit QinfoRef(ObjectPtr<Object> n) : ObjectRef(n) {}
+
+  /*! \return Mutable pointers to the node. */
+  QinfoNode* operator->() const {
+    auto* ptr = get_mutable();
+    ICHECK(ptr != nullptr);
+    return static_cast<QinfoNode*>(ptr);
+  }
+};
+
 struct QuantParams {
   struct Qinfo* qinfo;
   int32_t value_type;
@@ -266,6 +319,86 @@ struct QuantParams {
   int32_t q_size;
   int32_t offset;
   string dtype;
+};
+
+struct QuantParamsNode : public QuantParams, public Object {
+ public:
+  QuantParamsNode() = default;
+
+  explicit QuantParamsNode(QuantParams* params) {
+    value_type = params->value_type;
+    name = params->name;
+    shape = std::vector<int>(params->shape.begin(), params->shape.end());
+    q_size = params->q_size;
+    offset = params->offset;
+    dtype = params->dtype;
+    qinfo = params->qinfo;
+  }
+
+  QuantParams* GetQuantParams() {
+    QuantParams* res = new QuantParams;
+    res->dtype = dtype;
+    res->name = name;
+    res->offset = offset;
+    res->q_size = q_size;
+    res->qinfo = qinfo;
+    res->shape = shape;
+    res->value_type = value_type;
+
+    return res;
+  }
+
+  void VisitAttrs(AttrVisitor* v) {
+    Array<QinfoRef> qr_array;
+    for (int i = 0; i < q_size; i++) {
+      // auto n = make_object<Qinfo>(qinfo[i]);
+      // qr_array.push_back(QinfoRef(n));
+
+      QinfoNode qn(&qinfo[i]);
+      auto n = make_object<QinfoNode>(qn);
+      qr_array.push_back(QinfoRef(n));
+    }
+    v->Visit("qinfo", &qr_array);
+
+    v->Visit("value_type", &value_type);
+    v->Visit("name", &name);
+
+    Array<Integer> arr_shape;
+    for (auto s : shape) {
+      arr_shape.push_back(Integer(s));
+    }
+    v->Visit("shape", &arr_shape);
+
+    v->Visit("q_size", &q_size);
+    v->Visit("offset", &offset);
+    v->Visit("dtype", &dtype);
+  }
+
+  static constexpr const char* _type_key = "relay.ext.csinn.QuantParams";
+  TVM_DECLARE_FINAL_OBJECT_INFO(QuantParamsNode, Object);
+
+  friend class QuantParamsRef;
+};
+
+class QuantParamsRef : public ObjectRef {
+ public:
+  QuantParamsRef() {
+    auto n = make_object<QuantParamsNode>();
+    data_ = std::move(n);
+  }
+
+  /*!
+   * \brief Construct from an object pointer.
+   * \param n The object pointer.
+   */
+  explicit QuantParamsRef(ObjectPtr<Object> n) : ObjectRef(n) {}
+
+  /*! \return Mutable pointers to the node. */
+  QuantParamsNode* operator->() const {
+    auto* ptr = get_mutable();
+    ICHECK(ptr != nullptr);
+    return static_cast<QuantParamsNode*>(ptr);
+  }
 };
 
 class CSINNTensor {

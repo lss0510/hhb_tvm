@@ -136,6 +136,7 @@ set(USE_MICRO_STANDALONE_RUNTIME OFF)
 # example:
 # set(USE_LLVM "/home/zhangwm/git/tvm/llvm_install/bin/llvm-config")
 set(USE_LLVM ON)
+set(HIDE_PRIVATE_SYMBOLS ON)
 
 #---------------------------------------------
 # Contrib libraries
@@ -331,7 +332,7 @@ set(USE_HEXAGON_RPC OFF)
 set(USE_HEXAGON_ARCH "v66")
 
 # Whether to use ONNX codegen
-set(USE_TARGET_ONNX OFF)
+set(USE_TARGET_ONNX ON)
 
 # Whether enable BNNS runtime
 set(USE_BNNS OFF)

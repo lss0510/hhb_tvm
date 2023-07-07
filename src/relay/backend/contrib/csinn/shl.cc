@@ -57,10 +57,7 @@ void SHL::compiler(void) {
     }
   } else {
     /* codegen c API for JIT or interpreter */
-    if (device == "anole") {
-      CodegenAnole* builder = new CodegenAnole;
-      target_build<CodegenAnole>(builder);
-    } else if (device == "th1520" && !auto_quant) {
+    if (device == "th1520" && !auto_quant) {
       CodegenTH1520* builder = new CodegenTH1520;
       target_build<CodegenTH1520>(builder);
     } else if (device == "hth1520" || (device == "th1520" && auto_quant)) {
@@ -81,6 +78,9 @@ void SHL::compiler(void) {
     } else if (device == "c920") {
       CodegenC920* builder = new CodegenC920;
       target_build<CodegenC920>(builder);
+    } else if (device == "c920v2") {
+      CodegenC920v2* builder = new CodegenC920v2;
+      target_build<CodegenC920v2>(builder);
     } else {
       CodegenRef* builder = new CodegenRef;
       builder->SetExtFuncId(ext_func_id_);
@@ -88,6 +88,97 @@ void SHL::compiler(void) {
     }
   }
 }
+
+TVM_REGISTER_NODE_TYPE(QConfig_);
+TVM_REGISTER_GLOBAL("relay.ext.csinn.QnnConfig").set_body_typed([]() {
+  auto ctx = transform::PassContext::Current();
+  auto cfg = ctx->GetConfig<CSINNConfig>("relay.ext.csinn.options");
+  if (!cfg.defined()) {
+    cfg = AttrsWithDefaultValues<CSINNConfig>();
+  }
+  String device = cfg.value()->target;
+
+  CodegenCSINN* builder;
+  QnnConfig qconfig;
+  if (device == "th1520") {
+    builder = new CodegenTH1520;
+  } else if (device == "hth1520") {
+    builder = new CodegenHTH1520;
+  } else if (device == "e907") {
+    builder = new CodegenE907;
+  } else if (device == "c906") {
+    builder = new CodegenC906;
+  } else if (device == "rvm") {
+    builder = new CodegenRVM;
+  } else if (device == "c908") {
+    builder = new CodegenC908;
+  } else if (device == "c920") {
+    builder = new CodegenC920;
+  } else {
+    builder = new CodegenRef;
+  }
+
+  auto n = make_object<QConfig_>(*builder->GetQuantConfig());
+  qconfig = QnnConfig(n);
+
+  return qconfig;
+});
+
+TVM_REGISTER_NODE_TYPE(QinfoNode);
+TVM_REGISTER_NODE_TYPE(QuantParamsNode);
+
+TVM_REGISTER_GLOBAL("relay.ext.csinn.GetQuantParams")
+    .set_body_typed([](Array<Array<IndexExpr>> q_params, QnnConfig qnnconfig, String const_kind) {
+      auto qc = new QuantCalculator;
+      QuantParams* quant_params = qc->GetQuantParams(q_params, qnnconfig.operator->(), const_kind);
+
+      QuantParamsNode qpn(quant_params);
+      auto n = make_object<QuantParamsNode>(qpn);
+      QuantParamsRef qr(n);
+      return qr;
+    });
+
+TVM_REGISTER_GLOBAL("relay.ext.csinn.QuantizeWeight")
+    .set_body_typed([](runtime::NDArray data, String target_dtype, QuantParamsRef quant_params,
+                       Bool depthwise_kernel) {
+      CodegenCSINN codegen;
+      CSIConstant* constant =
+          new CSIConstant(codegen.GetDtypeString(data.DataType()),
+                          std::vector<int>(data.Shape().begin(), data.Shape().end()));
+      data.CopyToBytes(constant->get_data_buf(), constant->byte_size());
+
+      CSIConstant* quantized = codegen.CastParams(constant, target_dtype,
+                                                  quant_params->GetQuantParams(), depthwise_kernel);
+
+      Device device = {DLDeviceType::kDLCPU, 0};
+      auto quantized_data =
+          runtime::NDArray::Empty(data.Shape(), codegen.GetStringDtype(target_dtype), device);
+      quantized_data.CopyFromBytes(quantized->get_data_buf(), quantized->byte_size());
+
+      return quantized_data;
+    });
+
+TVM_REGISTER_GLOBAL("relay.ext.csinn.QuantizeBias")
+    .set_body_typed([](runtime::NDArray data, String target_dtype,
+                       QuantParamsRef input_quant_params, QuantParamsRef weight_quant_params) {
+      CodegenCSINN codegen;
+      CSIConstant* constant =
+          new CSIConstant(codegen.GetDtypeString(data.DataType()),
+                          std::vector<int>(data.Shape().begin(), data.Shape().end()));
+      data.CopyToBytes(constant->get_data_buf(), constant->byte_size());
+
+      CSIConstant* quantized =
+          codegen.CastParams(constant, target_dtype, *input_quant_params->GetQuantParams(),
+                             *weight_quant_params->GetQuantParams());
+
+      Device device = {DLDeviceType::kDLCPU, 0};
+      auto quantized_data =
+          runtime::NDArray::Empty(data.Shape(), codegen.GetStringDtype(target_dtype), device);
+      quantized_data.CopyFromBytes(quantized->get_data_buf(), quantized->byte_size());
+
+      return quantized_data;
+    });
+
 }  // namespace csinn
 }  // namespace contrib
 }  // namespace relay

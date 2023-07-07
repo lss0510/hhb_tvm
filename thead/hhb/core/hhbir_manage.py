@@ -423,6 +423,33 @@ class HHBQNNIR(HHBIRBase):
             with open(info_path, "a") as f:
                 yaml.safe_dump({"qnn_config": config_dict}, f, default_flow_style=False)
 
+        # save qnn into onnx
+        if config_dict is not None:
+            with tvm.transform.PassContext(
+                opt_level=3, config={"relay.ext.csinn.options": config_dict}
+            ):
+                from tvm.relay.quantize.qnn2onnx import (
+                    InsertQDQToQNN,
+                    qnn_to_onnx,
+                    ConvertQnnToFloat16,
+                )
+
+                if config_dict["target"] in ("th1520", "hth1520") and config_dict[
+                    "quantization_scheme"
+                ] in ("int8_sym", "int16_sym"):
+                    logger.warn(
+                        "Can not save onnx for th1520 with quantization scheme int8_sym/int16_sym."
+                    )
+                else:
+                    if config_dict["quantization_scheme"] == "float16":
+                        qdq_qfunc = ConvertQnnToFloat16()(self._curr_mod)
+                    elif config_dict["quantization_scheme"] == "float32":
+                        qdq_qfunc = self._curr_mod
+                    else:
+                        qdq_qfunc = InsertQDQToQNN()(self._curr_mod)
+                    qnn_onnx_path = os.path.join(model_path, "qnn.onnx")
+                    qnn_to_onnx(qdq_qfunc, {}, "qnn_csi", path=qnn_onnx_path)
+
 
 @hhb_ir_helper
 class HHBFloatCodegenIR(HHBIRBase):
@@ -795,7 +822,6 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
         model_save="run_only",
         without_preprocess=False,
         preprocess_params=None,
-        multithread=False,
         input_memory_type=None,
         q_scheme=None,
         codegen_config=None,
@@ -830,7 +856,6 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
             model_save,
             without_preprocess,
             preprocess_params,
-            multithread,
             input_memory_type,
             q_scheme,
             codegen_config.dynamic_shape,
@@ -850,7 +875,7 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
             target_path = os.path.join(wrapper_dir, "model_wrapper.tp")
             with open(target_path, "r") as f:
                 target_data = f.read()
-            if board in ("c906", "rvm", "c908", "c920"):
+            if board in ("c906", "rvm", "c908", "c920", "c920v2"):
                 tmp_data = "if (!output->is_const) {\n"
                 tmp_data += " " * 4 + "shl_mem_free(output->data);\n"
                 tmp_data += " " * 2 + "}"
@@ -935,7 +960,7 @@ class HHBBoardBuildRuntime:
 
         self.cflag = " -O2 -g "
 
-        if board in ("c906", "c908", "c920", "rvm", "th1520", "hth1520"):
+        if board in ("c906", "c908", "c920", "c920v2", "rvm", "th1520", "hth1520"):
             self.compiler = "riscv64-unknown-linux-gnu-gcc"
             # check compiler version
             compiler_version = ensure_compiler(self.compiler)
@@ -953,7 +978,9 @@ class HHBBoardBuildRuntime:
         logger.info("HHB base dir: %s", hhb_base_dir)
 
         # all target have same include with x86
-        self.include_dir = " -I" + shl_dir + "x86/include " + " -I" + dlpack_dir
+        self.include_dir = " -I" + shl_dir + "x86/include/ " + " -I" + dlpack_dir
+        self.include_dir += " -I" + shl_dir + "x86/include/shl_public/ "
+        self.include_dir += " -I" + shl_dir + "x86/include/csinn/ "
 
         self.include_dir += " -I" + tvm_inc_dir + " "
 
@@ -983,6 +1010,8 @@ class HHBBoardBuildRuntime:
             else:
                 raise HHBException("Unsupport link {} for c920.\n".format(link_lib))
             self.cflag += " -march=rv64gcv0p7_zfh_xtheadc "
+        elif board == "c920v2":
+            self.link_flag += " -L " + shl_dir + "c920v2/lib/ -lshl -static "
         elif board == "x86_ref":
             self.link_flag += " -L " + shl_dir + "x86/lib/ -lshl "
         else:
@@ -992,14 +1021,14 @@ class HHBBoardBuildRuntime:
         if android:
             runtime_dir = " -L " + prebuilt_dir + "runtime/riscv_android"
         else:
-            if board in ("c906", "c908", "c920", "rvm", "th1520", "hth1520"):
+            if board in ("c906", "c908", "c920", "c920v2", "rvm", "th1520", "hth1520"):
                 decode_dir = " -L " + prebuilt_dir + "decode/install/lib/rv"
                 runtime_dir = " -L " + prebuilt_dir + "runtime/riscv_linux"
             else:
                 decode_dir = " -L " + prebuilt_dir + "decode/install/lib/x86"
                 runtime_dir = " -L " + prebuilt_dir + "runtime/x86_linux"
 
-        if board in ("c906", "c908", "c920", "rvm", "th1520", "hth1520", "th1520_x86"):
+        if board in ("c906", "c908", "c920", "c920v2", "rvm", "th1520", "hth1520", "th1520_x86"):
             self.link_flag += (
                 decode_dir + runtime_dir + " -lprebuilt_runtime -ljpeg -lpng -lz -lstdc++ -lm "
             )
@@ -1193,7 +1222,7 @@ class HHBBoardBuildRuntime:
         # Generate simulation exectution
         #
         sim_exec_data = ""
-        if self.board in ("x86_ref", "c906", "c908", "c920", "th1520_x86"):
+        if self.board in ("x86_ref", "c906", "c908", "c920", "c920v2", "th1520_x86"):
             if self.board == "th1520_x86":
                 _, shl_dir, _, _, _ = find_base_path()
                 sim_exec_data += "NNA_DDK_DIR ?=\n"
@@ -1217,6 +1246,8 @@ class HHBBoardBuildRuntime:
                 exec_prefix += "qemu-riscv64 -cpu c908v "
             elif self.board == "c920":
                 exec_prefix += "qemu-riscv64 -cpu c920 "
+            elif self.board == "c920v2":
+                exec_prefix += "qemu-riscv64 -cpu c920v2 "
             sim_exec_data += f"\t{exec_prefix}./{self.runtime_name} hhb.bm {' '.join(input_data)}\n"
 
             if self.board == "th1520_x86" and self.jit:

@@ -29,7 +29,8 @@ import time
 # current version
 # We use the version of the incoming release for code
 # that is under development
-__version__ = "2.4.0"
+
+__version__ = "2.6.0"
 __build_time__ = time.strftime("%Y%m%d", time.localtime())
 
 # Implementations
@@ -87,8 +88,6 @@ def main():
         __build_time__,
     )
 
-    update_version(os.path.join(proj_root, "thead", "hhb", "config", "anole.tp"))
-    update_version(os.path.join(proj_root, "thead", "hhb", "config", "anole_multithread.tp"))
     update_version(os.path.join(proj_root, "thead", "hhb", "config", "c906.tp"))
     update_version(os.path.join(proj_root, "thead", "hhb", "config", "c906_cmdline.tp"))
     update_version(os.path.join(proj_root, "thead", "hhb", "config", "c920.tp"))
@@ -96,8 +95,6 @@ def main():
     update_version(os.path.join(proj_root, "thead", "hhb", "config", "th1520_jit.tp"))
     update_version(os.path.join(proj_root, "thead", "hhb", "config", "thead.tp"))
     update_version(os.path.join(proj_root, "thead", "hhb", "config", "x86_ref.tp"))
-    update_version(os.path.join(proj_root, "thead", "hhb", "config", "reg_rewrite", "c906.tp"))
-    update_version(os.path.join(proj_root, "thead", "hhb", "config", "reg_rewrite", "rvv.tp"))
     update_version(os.path.join(proj_root, "thead", "hhb", "config", "process", "include", "io.h"))
     update_version(
         os.path.join(proj_root, "thead", "hhb", "config", "process", "include", "process.h")

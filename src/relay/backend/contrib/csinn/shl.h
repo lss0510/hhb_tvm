@@ -33,11 +33,11 @@
 #include <utility>
 #include <vector>
 
-#include "anole.h"
 #include "backend.h"
 #include "c906.h"
 #include "c908.h"
 #include "c920.h"
+#include "c920v2.h"
 #include "csinn.h"
 #include "e907.h"
 #include "gref.h"

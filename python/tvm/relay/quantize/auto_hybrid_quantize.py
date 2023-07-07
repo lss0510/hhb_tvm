@@ -561,8 +561,10 @@ def load_lib(module_factory, output_dir):
     contrib_dir = os.path.dirname(os.path.realpath(os.path.expanduser(__file__)))
     contrib_dir = os.path.realpath(os.path.join(contrib_dir, "..", "..", ".."))
     source_dir = os.path.join(contrib_dir, "..")
-    include_path0 = os.path.join(source_dir, "install_nn2", "x86", "include")
-    include_path1 = os.path.join(contrib_dir, "hhb", "install_nn2", "x86", "include")
+    include_path0 = os.path.join(source_dir, "install_nn2", "x86", "include", "csinn")
+    include_path00 = os.path.join(source_dir, "install_nn2", "x86", "include", "shl_public")
+    include_path1 = os.path.join(contrib_dir, "hhb", "install_nn2", "x86", "include", "csinn")
+    include_path11 = os.path.join(contrib_dir, "hhb", "install_nn2", "x86", "include", "shl_public")
     ref_x86_dir0 = os.path.join(source_dir, "install_nn2", "x86", "lib")  # for source
     ref_x86_dir1 = os.path.join(contrib_dir, "hhb", "install_nn2", "x86", "lib")  # for package binary
     lib_path = os.path.join(output_dir, "quant.so")
@@ -571,7 +573,9 @@ def load_lib(module_factory, output_dir):
         "-O2",
         "-g",
         "-I" + include_path0,
+        "-I" + include_path00,
         "-I" + include_path1,
+        "-I" + include_path11,
         "-L" + ref_x86_dir0,
         "-L" + ref_x86_dir1,
         "-lshl",

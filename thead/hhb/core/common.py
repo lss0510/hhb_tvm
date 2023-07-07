@@ -41,8 +41,8 @@ logger = logging.getLogger("HHB")
 
 def hhb_version():
     """Version information"""
-    __version__ = "2.4.0"
-    __build_time__ = "20230614"
+    __version__ = "2.6.0"
+    __build_time__ = "20230830"
     return "HHB version: " + __version__ + ", build " + __build_time__
 
 
@@ -226,9 +226,7 @@ def ensure_compiler(command):
 
 def get_target(board):
     """Get the target info accorrding to the board type."""
-    if board == "anole":
-        target = "c -device=anole"
-    elif board == "th1520":
+    if board == "th1520":
         target = "c -device=th1520"
     elif board == "hth1520":
         target = "c -device=hth1520"
@@ -242,6 +240,8 @@ def get_target(board):
         target = "c -device=c908"
     elif board == "c920":
         target = "c -device=c920"
+    elif board == "c920v2":
+        target = "c -device=c920v2"
     elif board == "x86_ref":
         target = "c"
     return target

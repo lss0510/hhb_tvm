@@ -24,7 +24,6 @@
 
 #include "csinn.h"
 
-#include "anole.h"
 #include "gref.h"
 #include "th1520.h"
 
@@ -382,9 +381,8 @@ void CodegenCSINN::visit_expr(const CallNode* call) {
 string CodegenCSINN::replace(string a) {
   std::string new_name = a;
   int pos;
-  int illegal_str_length = 3;
-  char illegal_str[illegal_str_length] = {'.', '/', ':'};
-  for (int i = 0; i < illegal_str_length; i++) {
+  std::vector<char> illegal_str = {'.', '/', ':'};
+  for (size_t i = 0; i < illegal_str.size(); i++) {
     pos = new_name.find(illegal_str[i]);
     while (pos != -1) {
       new_name.replace(pos, 1, "_");

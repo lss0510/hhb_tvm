@@ -18,11 +18,11 @@
  */
 
 /*!
- * \file src/relay/backend/contrib/csinn/anole.h
- * \brief The base class for anole.
+ * \file src/relay/backend/contrib/csinn/c920v2.h
+ * \brief The base class for c920v2.
  */
-#ifndef TVM_RELAY_BACKEND_CONTRIB_CSINN_ANOLE_H_
-#define TVM_RELAY_BACKEND_CONTRIB_CSINN_ANOLE_H_
+#ifndef TVM_RELAY_BACKEND_CONTRIB_CSINN_C920V2_H_
+#define TVM_RELAY_BACKEND_CONTRIB_CSINN_C920V2_H_
 
 #include <string>
 #include <vector>
@@ -33,23 +33,27 @@ namespace tvm {
 namespace relay {
 namespace contrib {
 namespace csinn {
-class CodegenAnole : public CodegenGref {
+class CodegenC920v2 : public CodegenGref {
  public:
-  virtual void visit_expr(const CallNode* call);
-  virtual void EmitHeader(void);
-  virtual void EmitSessionSetup(void);
-  virtual void EmitNBGSetup(void);
-  void ModelBinarySave();
+  void EmitNBGSetup(void) {}
+  void ModelBinarySave() {
+    std::ostringstream t0;
 
-  virtual void DisoOp(const CallNode* call, string op_name);
-  virtual void Flatten(const CallNode* call);
-  virtual void Squeeze(const CallNode* call);
-  virtual void Reshape(const CallNode* call);
-  void SessionRunMode() { func_def_.OneLine("sess->base_run_mode = CSINN_RM_NPU_GRAPH;"); }
+    t0 << "sess->base_quant_type = " << cfg->quantization_scheme << ";";
+    func_def_.OneLine(t0);
+
+    if (model_save == "run_only") {
+      t0 << "sess->model.save_mode = CSINN_RUN_ONLY;";
+    } else {
+      std::cerr << "Unsupport for model save_mode type: " << model_save << "\n";
+      exit(-1);
+    }
+    func_def_.OneLine(t0);
+  }
 };
 
 }  // namespace csinn
 }  // namespace contrib
 }  // namespace relay
 }  // namespace tvm
-#endif  // TVM_RELAY_BACKEND_CONTRIB_CSINN_ANOLE_H_
+#endif  // TVM_RELAY_BACKEND_CONTRIB_CSINN_C920V2_H_

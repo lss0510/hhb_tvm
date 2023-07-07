@@ -1224,10 +1224,7 @@ def convert_to_csi_qnn(mod, quant_params):
                 assert len(origin_shape) == 4, "Only support 4-dim shape of image.resize"
                 scale_h = int(cts.size[0]) / origin_shape[2]
                 scale_w = int(cts.size[1]) / origin_shape[3]
-                if cts.coordinate_transformation_mode == "asymmetric":
-                    align_corners = False
-                else:
-                    align_corners = True
+                align_corners = cts.coordinate_transformation_mode == "align_corners"
                 new_call = relay.qnn.op.csi_upsampling(
                     data,
                     scale_h,
@@ -1657,8 +1654,8 @@ def convert_to_csi_qnn(mod, quant_params):
                         cts.axis,
                     ]
                 )
-                for i in list(axis):
-                    new_shape.insert(i, 1)
+                for i in range(cts.num_newaxis):
+                    new_shape.insert(cts.axis, 1)
                 new_call = relay.qnn.op.csi_reshape(
                     data,
                     new_shape,
@@ -2061,6 +2058,8 @@ def _qnn_attrs(attrs):
             ret[i] = getattr(attrs, i)
             if isinstance(ret[i], tvm.ir.container.Array):
                 ret[i] = _get_array_value(ret[i])
+            elif isinstance(ret[i], tvm.tir.expr.IntImm):
+                ret[i] = ret[i].value
 
     return ret
 
@@ -2620,7 +2619,7 @@ def fuse_layer(mod):
 
 
 def optimize_quantization(mod, broadcast_quantization=False, target=""):
-    """Optimize quantization for anole and th1520"""
+    """Optimize quantization for th1520"""
 
     class OptimizeShapeCheck(relay.ExprMutator):
         """Optimize shape check layer"""
@@ -2990,74 +2989,12 @@ def optimize_quantization(mod, broadcast_quantization=False, target=""):
                             for in_name in node.inputs:
                                 self.update_node_out(in_name, node.name, node.attr["q_params"][-1])
 
-        def anole_qinfo_mutator(self, in2out_list, out2in_list):
-            """qinfo mutator for anole"""
-
-            for node_name, node in self.indexd_graph.items():
-                op_name = node.op_name
-                can_optimize = True
-                if op_name == "qnn.csi.concatenate":
-                    for idx, in_name in enumerate(node.inputs):
-                        in_node = self.indexd_graph[in_name]
-                        if len(in_node.outputs) > 1 or in_node.op_name == "qnn.csi.concatenate":
-                            can_optimize = False
-                            break
-                    if not can_optimize:
-                        continue
-                    for idx, in_name in enumerate(node.inputs):
-                        in_node = self.indexd_graph[in_name]
-                        if in_node.op_name in in2out_list:
-                            continue
-                        node.attr["q_params"][idx] = node.attr["q_params"][-1]
-                        # register for all inputs
-                        self.update_node_out(in_name, node.name, node.attr["q_params"][0])
-
-                if op_name == "qnn.csi.maxpool2d":
-                    if node.attr["q_params"][0] == node.attr["q_params"][-1]:
-                        continue
-                    node.attr["q_params"][-1] = node.attr["q_params"][0]
-                    for out_name in node.outputs:
-                        self.update_node_in(out_name, node.name, node.attr["q_params"][-1])
-
-            while self.need_change:
-                node_name = self.need_change.pop()
-                node = self.indexd_graph[node_name]
-                in_changed = False
-                out_changed = False
-                if len(node.change_out) > 1:
-                    if node.op_name != "qnn.csi.split":
-                        raise Exception(
-                            "Multiple nodes attempt to modify the current node at the same time！"
-                        )
-                if node.change_in:
-                    for in_node_name, qinfo in node.change_in.items():
-                        in_idx = node.get_input_idx(in_node_name)
-                        node.attr["q_params"][in_idx] = qinfo
-                    in_changed = True
-                    node.change_in.clear()
-
-                if node.change_out:
-                    if node.op_name not in in2out_list:
-                        for _, qinfo in node.change_out.items():
-                            node.attr["q_params"][-1] = qinfo
-                            break
-                        # updat outputs
-                        for out_name in node.outputs:
-                            self.update_node_in(out_name, node.name, node.attr["q_params"][-1])
-                            out_changed = True
-                    node.change_out.clear()
-
-                if in_changed and out_changed:
-                    raise Exception("Input and output qinfo can't be changed at the same time.")
-
         def qinfo_exchange(self, in2out_list, out2in_list, target):
             """change node quant params"""
             in2out_list = ["qnn.csi." + op for op in in2out_list]
             out2in_list = ["qnn.csi." + op for op in out2in_list]
             if target in ("th1520", "hth1520"):
                 self.th1520_qinfo_mutator(in2out_list, out2in_list)
-            elif target == "anole":
-                self.anole_qinfo_mutator(in2out_list, out2in_list)
             else:
                 self.cpu_qinfo_mutator(in2out_list, out2in_list)
 
@@ -3123,10 +3060,6 @@ def optimize_quantization(mod, broadcast_quantization=False, target=""):
 
     mod["main"] = OptimizeShapeCheck().visit(mod["main"])
     if broadcast_quantization:
-        if target == "anole" and current_csinn_config().channel_quantization:
-            logger.warning("Broadcast optimize pass not suit for anole with channel quantization.")
-            return mod
-
         if target in ["th1520", "hth1520"]:
             out2in_list = ["concatenate"]
             in2out_list = [
@@ -3143,9 +3076,6 @@ def optimize_quantization(mod, broadcast_quantization=False, target=""):
                 "strided_slice",
             ]
             mod["main"] = InsertAddBeforeConcat(out2in_list + in2out_list).visit(mod["main"])
-        elif target in ["anole"]:
-            out2in_list = ["concatenate"]
-            in2out_list = ["transpose", "reshape", "upsampling", "maxpool2d", "strided_slice"]
         else:
             out2in_list = []
             in2out_list = ["transpose", "reshape", "upsampling", "maxpool2d", "strided_slice"]

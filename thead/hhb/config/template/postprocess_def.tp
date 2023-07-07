@@ -11,7 +11,6 @@ static void postprocess(void *sess, const char *filename_prefix) {
         input->data = NULL;
         csinn_get_input(i, input, sess);
         print_tensor_info(input);
-        #_free_anole_input_data_#
     }
 
     output_num = csinn_get_output_number(sess);

@@ -17,13 +17,21 @@
 """Manage main command."""
 import logging
 import os
-import numpy as np
-import tvm
-from tvm.contrib import graph_executor
-from tvm.relay.quantize.quantize_hhb import detect_quantized_model
+from typing import List, Union
 
-from .arguments_manage import ArgumentFilter
-from .frontend_manage import import_model, insert_preprocess_node
+import numpy as np
+import onnx
+from onnxsim import simplify
+
+import tvm
+from tvm import relay
+from tvm.contrib import graph_executor
+from tvm.contrib.target.onnx import to_onnx
+from tvm.relay.quantize.quantize_hhb import _bind_params
+from tvm.relay.quantize.quantize_hhb import optimization_phase0
+
+from .arguments_manage import ArgumentFilter, Config
+from .frontend_manage import import_model, insert_preprocess_node, get_io_info_from_onnx
 from .common import ensure_dir, AttributeDict, HHBException, generate_config_file
 from .hhbir_manage import (
     HHBRelayIR,
@@ -42,6 +50,8 @@ from .quantization_manage import (
     get_config_dict,
     update_hybrid_layer,
     ignore_layers_from_auto_quant,
+    get_quant_scheme_from_qnn,
+    convert_per_channel_scheme,
 )
 from .preprocess_manage import (
     collect_preprocess_config,
@@ -96,6 +106,140 @@ def generate_dataset(args_filter: ArgumentFilter):
         index += 1
 
 
+def optimize_model(
+    model_file: List[str],
+    opt_tool: str,
+    arguments: Union[AttributeDict, Config],
+):
+    """
+    .onnx/.tf/.caffemodel -> relay -> optimize -> .onnx -> ppq -> relay -> qnn
+
+    .onnx -> ppq -> relay -> qnn
+
+    Parameters
+    ----------
+    model_file : List[str]
+        Model files
+    opt_tool : str
+        Tool to optimize model.
+    opt_level : int
+        Optimization level:
+    """
+    if opt_tool != "ppq":
+        return model_file
+    assert isinstance(
+        arguments, (AttributeDict, Config)
+    ), f"Parameters 'arguments' must be AttributeDict or Config, but get {type(arguments)}"
+    assert isinstance(
+        model_file, (tuple, list)
+    ), f"model_file should be list, but get {type(model_file)}"
+    is_onnx = False
+    if len(model_file) == 1 and os.path.splitext(model_file[0])[-1] == ".onnx":
+        is_onnx = True
+    args = arguments if isinstance(arguments, AttributeDict) else arguments.convert_to_arguments()
+    opt_level = args.opt_level
+
+    new_model_path = model_file
+    new_input_name = args.input_name
+    new_input_shape = args.input_shape
+    new_output_name = args.output_name
+    if opt_level == 3 or not is_onnx:
+        # convert to relay ir
+        mod, params = import_model(
+            model_file,
+            args.model_format,
+            new_input_name,
+            new_input_shape,
+            new_output_name,
+        )
+        if params:
+            mod["main"] = _bind_params(mod["main"], params)
+            params = None
+
+        # optimize relay ir
+        mod = optimization_phase0(mod)
+        mod = relay.transform.InferType()(mod)
+
+        # convert to onnx
+        relay_onnx_path = os.path.join(args.output, "model_relay_opt.onnx")
+        onnx_model = to_onnx(mod, {}, "relay")
+        # simplify onnx
+        onnx_model_sim, check = simplify(onnx_model)
+        if check:
+            onnx.save(onnx_model_sim, relay_onnx_path)
+        else:
+            onnx.save(onnx_model, relay_onnx_path)
+            logger.warning("Fail to optimize onnx with onnxsim, back to relay onnx.")
+        logger.debug("New model with relay optimization is save in %s", relay_onnx_path)
+
+        new_model_path = [relay_onnx_path]
+
+        new_input_name, new_input_shape, new_output_name, _ = get_io_info_from_onnx(relay_onnx_path)
+
+    # create calibrate dataset
+    args_filter = ArgumentFilter(args)
+    all_filters = [
+        collect_preprocess_config,
+        set_preprocess_params,
+    ]
+    extra_args = AttributeDict()
+    extra_args.input_shape = new_input_shape
+    args_filter.filter_argument(all_filters, extra=extra_args)
+    args = args_filter.filtered_args
+
+    dataset_list = []
+    dl = DatasetLoader(
+        args.calibrate_dataset, args.preprocess_config, new_input_shape, new_input_name
+    )
+    dataset = dl.get_data()
+    for d in dataset:
+        inter = []
+        for name in new_input_name:
+            inter.append(d[name])
+        dataset_list.append(inter)
+
+    device = args.quant_device
+    # quantize model with ppq
+    from ..tools.ppq_quantization import quantize_ppq
+    from ppq.api import ENABLE_CUDA_KERNEL
+
+    if device == "cuda":
+        with ENABLE_CUDA_KERNEL():
+            new_model_path, _ = quantize_ppq(
+                new_model_path[0],
+                new_input_shape,
+                args,
+                dataset_list,
+                batch_size=args.cali_batch,
+                device=device,
+                output_dir=args.output,
+                target=args.board,
+            )
+    else:
+        new_model_path, _ = quantize_ppq(
+            new_model_path[0],
+            new_input_shape,
+            args,
+            dataset_list,
+            batch_size=args.cali_batch,
+            device=device,
+            output_dir=args.output,
+            target=args.board,
+        )
+    return new_model_path
+
+
+def print_model_info(model_file, input_name, input_shape, output_name, prefix=""):
+    """Print model info"""
+    info_str = "\n---------" + f"{prefix} Model info ---------\n"
+    info_str += f"Model path: {model_file}\n"
+    info_str += f"Input name: {input_name}\n"
+    info_str += f"Input shape: {input_shape}\n"
+    info_str += f"Output name: {output_name}\n"
+
+    logger.log(LOG, info_str)
+
+
 def driver_main_command(args_filter: ArgumentFilter):
     """Driver main command"""
     args = args_filter.filtered_args
@@ -112,6 +256,33 @@ def driver_main_command(args_filter: ArgumentFilter):
 
     if not (args.E or args.Q or args.C or args.D or args.S or args.simulate):
         raise HHBException("No subcommand select.\n")
+
+    # optimize model
+    if args.quantization_tool == "ppq":
+        print_model_info(
+            args.model_file,
+            args.input_name,
+            args.input_shape,
+            args.output_name,
+            "Before optimization",
+        )
+        ppq_quantized_file = optimize_model(args.model_file, args.quantization_tool, args)
+        # update info
+        input_name, input_shape, output_name, _ = get_io_info_from_onnx(ppq_quantized_file)
+        args.input_name = input_name
+        args.input_shape = input_shape
+        args.output_name = output_name
+        args.model_file = [ppq_quantized_file]
+
+        print_model_info(
+            args.model_file,
+            args.input_name,
+            args.input_shape,
+            args.output_name,
+            "After optimization",
+        )
+        if args.Q:
+            return 0
 
     #######################################################################
     #
@@ -157,27 +328,34 @@ def driver_main_command(args_filter: ArgumentFilter):
     output_shape_list, _ = get_output_info_from_relay(mod, params)
 
     if not args.no_quantize:
-        detected_quant_type = detect_quantized_model(mod)
-        if detected_quant_type:
-            if len(detected_quant_type) == 1:
-                detected_quant_type = detected_quant_type.pop()
-                if detected_quant_type == "uint8":
-                    args.quantization_scheme = "uint8_asym"
-                elif detected_quant_type == "int8":
-                    args.quantization_scheme = "int8_asym"
+        quant_scheme, is_per_channel, qnn_dtypes = get_quant_scheme_from_qnn(mod)
+        if args.quantization_scheme == "unset" and qnn_dtypes:
+            # there is quantize/dequantize op in module, so it is a quantized model.
+            if quant_scheme and is_per_channel:
+                coverted_quant_scheme = convert_per_channel_scheme(quant_scheme)
+                if coverted_quant_scheme is None:
+                    raise HHBException(f"Unsupport per-channel quantization for {quant_scheme}\n")
                 else:
-                    raise HHBException(
-                        "Unsupport quantization type:{}.\n".format(detected_quant_type)
+                    args.quantization_scheme = coverted_quant_scheme
+                    logger.log(
+                        LOG,
+                        "Detect that current model has been quantized with per-channel {}, "
+                        "then quantization_scheme is set {}".format(
+                            quant_scheme, args.quantization_scheme
+                        ),
                     )
+            elif quant_scheme:
+                args.quantization_scheme = quant_scheme
                 logger.log(
                     LOG,
-                    "Detect that current model has been quantized with {}, "
-                    "--quantization-scheme will be overwritten to {}".format(
-                        detected_quant_type, args.quantization_scheme
-                    ),
+                    "Detect that current model has been quantized with {}, ".format(quant_scheme),
                 )
             else:
-                logger.warning("Detect that there are multi quantization types in model.")
+                raise HHBException(
+                    "Can not infer the quantization scheme from original model, please "
+                    "specify it by --quantization-scheme.\n"
+                )
+
     # filter arguments and prepare all needed args
     all_filters = [
         collect_preprocess_config,
@@ -232,7 +410,6 @@ def driver_main_command(args_filter: ArgumentFilter):
     # Execute '-C' command
     #
     target_board_list = (
-        "anole",
         "th1520",
         "hth1520",
         "e907",
@@ -240,6 +417,7 @@ def driver_main_command(args_filter: ArgumentFilter):
         "rvm",
         "c908",
         "c920",
+        "c920v2",
         "x86_ref",
     )
     config_dict = get_config_dict(args)
@@ -312,7 +490,6 @@ def driver_main_command(args_filter: ArgumentFilter):
                 args.codegen_config.model_save,
                 args.codegen_config.without_preprocess,
                 args.preprocess_config,
-                args.codegen_config.multithread,
                 args.codegen_config.input_memory_type,
                 args.quantize_config.quantization_scheme,
                 args.codegen_config,
@@ -421,6 +598,14 @@ def driver_main_command(args_filter: ArgumentFilter):
         elif args.board == "c920":
             inference_elf(
                 "qemu-riscv64 -cpu c920 hhb_runtime",
+                dataset,
+                input_name_list,
+                all_file_path,
+                args.output,
+            )
+        elif args.board == "c920v2":
+            inference_elf(
+                "qemu-riscv64 -cpu c920v2 hhb_runtime",
                 dataset,
                 input_name_list,
                 all_file_path,

@@ -87,7 +87,6 @@ def hhb_codegen(hhb_ir, config):
 
     opt_level = 3
     target_board_list = (
-        "anole",
         "th1520",
         "hth1520",
         "e907",
@@ -95,6 +94,7 @@ def hhb_codegen(hhb_ir, config):
         "rvm",
         "c908",
         "c920",
+        "c920v2",
     )
     config_dict = get_config_dict(hhb_config)
 
@@ -139,7 +139,6 @@ def hhb_codegen(hhb_ir, config):
             hhb_config.codegen_config.model_save,
             hhb_config.codegen_config.without_preprocess,
             hhb_config.preprocess_config,
-            hhb_config.codegen_config.multithread,
             hhb_config.codegen_config.input_memory_type,
             hhb_config.quantize_config.quantization_scheme,
             hhb_config.codegen_config,
@@ -214,7 +213,6 @@ def driver_codegen(args_filter: ArgumentFilter):
         else:
             raise HHBException("unsupport for IR type: {}".format(HHBIRType.TYPE2NAME[model_type]))
     elif args.board in (
-        "anole",
         "th1520",
         "hth1520",
         "e907",
@@ -222,6 +220,7 @@ def driver_codegen(args_filter: ArgumentFilter):
         "rvm",
         "c908",
         "c920",
+        "c920v2",
     ):
         if model_type != HHBIRType.QNN:
             raise HHBException(
@@ -269,7 +268,6 @@ def driver_codegen(args_filter: ArgumentFilter):
         quantize_config["model_priority"] = args.codegen_config.model_priority
         quantize_config["matrix_extension_mlen"] = args.matrix_extension_mlen
         quantize_config["target"] = args.board
-        quantize_config["multi_thread"] = args.codegen_config.multithread
 
         if len(th1520_input_fix_size) == 2:
             quantize_config["th1520_input_fix_height"] = th1520_input_fix_size[0]
@@ -304,7 +302,6 @@ def driver_codegen(args_filter: ArgumentFilter):
             args.codegen_config.model_save,
             args.codegen_config.without_preprocess,
             qnn_ir.info_dict["preprocess"],
-            args.codegen_config.multithread,
             args.codegen_config.input_memory_type,
             quantize_config["quantization_scheme"],
             args.codegen_config,

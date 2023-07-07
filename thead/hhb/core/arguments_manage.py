@@ -279,24 +279,24 @@ class OptimizeArguments(ArgumentsBase):
             name="--board",
             default="unset",
             choices=[
-                "anole",
                 "th1520",
                 "e907",
                 "c906",
                 "c908",
                 "c920",
+                "c920v2",
                 "rvm",
                 "x86_ref",
                 "unset",
             ],
-            help="Set target device, default is anole.",
+            help="Set target device, default is unset.",
         )
         self.opt_level = ArgSpecHelper(
             name="--opt-level",
             choices=[-1, 0, 1, 2, 3],
-            default=3,
+            default=0,
             type=int,
-            help="Specify the optimization level, default is 3.",
+            help="Specify the optimization level, default is 0.",
             hidden=True,
         )
         self.hybrid_computing = ArgSpecHelper(
@@ -472,7 +472,14 @@ class QuantizeArguments(ArgumentsBase):
         )
         self.calibrate_mode = ArgSpecHelper(
             name="--calibrate-mode",
-            choices=["maxmin", "pow2", "kl_divergence", "kl_divergence_tsing", "scale"],
+            choices=[
+                "maxmin",
+                "pow2",
+                "kl_divergence",
+                "kl_divergence_tsing",
+                "scale",
+                "percentile",
+            ],
             default="maxmin",
             help="How to calibrate while doing quantization, default is maxmin.",
             hidden=True,
@@ -512,6 +519,7 @@ class QuantizeArguments(ArgumentsBase):
             name="--channel-quantization",
             action="store_true",
             help="Do quantizetion across channel.",
+            hidden=True,
         )
         self.broadcast_quantization = ArgSpecHelper(
             name="--broadcast-quantization",
@@ -587,6 +595,41 @@ class QuantizeArguments(ArgumentsBase):
             action="store_true",
             help="This parameter is used to convert quanted qnn model to relay.",
             hidden=True,
+        )
+        self.quantization_tool = ArgSpecHelper(
+            name="--quantization-tool",
+            choices=["default", "ppq"],
+            default="default",
+            help="Model quantization tool, default is hhb.",
+        )
+        self.lsq = ArgSpecHelper(
+            name="--lsq",
+            action="store_true",
+            help="Whether uses lsq quantization algorithm.",
+        )
+        self.lsq_lr = ArgSpecHelper(
+            name="--lsq-lr",
+            type=float,
+            default=1e-5,
+            help="Initial learning rate for lsq.",
+        )
+        self.lsq_steps = ArgSpecHelper(
+            name="--lsq-steps",
+            type=int,
+            default=500,
+            help="Training steps for lsq.",
+        )
+        self.quant_device = ArgSpecHelper(
+            name="--quant-device",
+            choices=["cpu", "cuda"],
+            default="cpu",
+            help="The device to quantize model, defaults to cpu.",
+        )
+        self.cali_batch = ArgSpecHelper(
+            name="--cali-batch",
+            type=int,
+            default=16,
+            help="The batch size for calibration.",
         )
 
     @property
@@ -772,12 +815,6 @@ class CodegenArguments(ArgumentsBase):
             name="--without-preprocess",
             action="store_true",
             help="Do not generate preprocess codes.",
-        )
-        self.multithread = ArgSpecHelper(
-            name="--multithread",
-            action="store_true",
-            help="Create multithread codes.",
-            hidden=True,
         )
         self.trace_strategy = ArgSpecHelper(
             name="--trace-strategy",
@@ -976,6 +1013,15 @@ class Config(object):
 
         self._cmd_config = None
 
+    def convert_to_arguments(self) -> AttributeDict:
+        args = AttributeDict()
+        for v in self.__dict__.values():
+            if isinstance(v, ArgumentsBase):
+                for name, value in v.__dict__.items():
+                    if isinstance(value, ArgSpecHelper):
+                        args[name] = value.value
+        return args
+
     def update_config_from_module(self, hhb_ir):
         mod, params = hhb_ir.get_model()
         input_name_list, input_shape_list, _ = get_input_info_from_relay(mod, params)
@@ -1046,13 +1092,11 @@ class Config(object):
             )
         self.optimize.board.value = board
 
-        if board in ("anole",):
-            self.quantize.quantization_scheme.value = "uint8_asym"
-        elif board in ("x86_ref", "th1520"):
+        if board in ("x86_ref", "th1520"):
             self.quantize.quantization_scheme.value = "int8_asym"
         elif board in ("c906", "c920"):
             self.quantize.quantization_scheme.value = "float16"
-        elif board in ("e907", "c908", "rvm"):
+        elif board in ("e907", "c908", "c920v2", "rvm"):
             self.quantize.quantization_scheme.value = "int8_asym_w_sym"
         else:
             self.quantize.quantization_scheme.value = "uint8_asym"

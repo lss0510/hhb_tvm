@@ -20,6 +20,7 @@ Optimize the imported model.
 """
 import logging
 import os
+import tvm
 from tvm.relay.quantize.quantize_hhb import detect_quantized_model
 
 from .core.common import (
@@ -136,6 +137,28 @@ def hhb_quantize(relay_ir: HHBRelayIR, config, calibrate_data=None, save_to_dir=
     if save_to_dir is not None:
         save_to_dir = ensure_dir(save_to_dir)
         save_quantized_model(qnn_ir._curr_mod, save_to_dir)
+
+        # convert to onnx
+        with tvm.transform.PassContext(
+            opt_level=3, config={"relay.ext.csinn.options": inter_hhb_config}
+        ):
+            from tvm.relay.quantize.qnn2onnx import InsertQDQToQNN, qnn_to_onnx, ConvertQnnToFloat16
+
+            if inter_hhb_config["target"] in ("th1520", "hth1520") and inter_hhb_config[
+                "quantization_scheme"
+            ] in ("int8_sym", "int16_sym"):
+                logger.warn(
+                    "Can not save onnx for th1520 with quantization scheme int8_sym/int16_sym."
+                )
+            else:
+                if inter_hhb_config["quantization_scheme"] == "float16":
+                    qdq_qfunc = ConvertQnnToFloat16()(qnn_ir._curr_mod)
+                elif inter_hhb_config["quantization_scheme"] == "float32":
+                    qdq_qfunc = qnn_ir._curr_mod
+                else:
+                    qdq_qfunc = InsertQDQToQNN()(qnn_ir._curr_mod)
+                qnn_onnx_path = os.path.join(save_to_dir, "qnn.onnx")
+                qnn_to_onnx(qdq_qfunc, {}, "qnn_csi", path=qnn_onnx_path)
 
     return qnn_ir
 

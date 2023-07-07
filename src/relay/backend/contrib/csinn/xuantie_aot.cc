@@ -38,9 +38,8 @@ using namespace tvm::relay;
 static string replace_illegal_string(string a) {
   std::string new_name = a;
   int pos;
-  int illegal_str_length = 4;
-  char illegal_str[illegal_str_length] = {'.', '/', ':', '@'};
-  for (int i = 0; i < illegal_str_length; i++) {
+  std::vector<char> illegal_str = {'.', '/', ':', '@'};
+  for (size_t i = 0; i < illegal_str.size(); i++) {
     pos = new_name.find(illegal_str[i]);
     while (pos != -1) {
       new_name.replace(pos, 1, "_");

@@ -324,6 +324,27 @@ class CSINNExprFunctor<R(const Expr& n)> {
     return dtype;
   }
 
+  DataType GetStringDtype(std::string str) {
+    DataType d;
+    if (str == "float" || str == "float32") {
+      d = DataType(kDLFloat, 32, 1);
+    } else if (str == "int8_t") {
+      d = DataType(kDLInt, 8, 1);
+    } else if (str == "uint8_t") {
+      d = DataType(kDLUInt, 8, 1);
+    } else if (str == "int16_t") {
+      d = DataType(kDLInt, 16, 1);
+    } else if (str == "int32_t") {
+      d = DataType(kDLInt, 32, 1);
+    } else if (str == "float16") {
+      d = DataType(kDLFloat, 16, 1);
+    } else {
+      LOG(FATAL) << "Unsupported dtype " << str;
+    }
+
+    return d;
+  }
+
  private:
   // initialize the vtable.
   static FType InitVTable() {

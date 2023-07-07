@@ -113,7 +113,6 @@ def entry_c_codegen(
     model_save="run_only",
     without_preprocess=False,
     preprocess_params=None,
-    multithread=False,
     input_memory_type=None,
     q_scheme=None,
     dynamic_shape=None,
@@ -132,7 +131,7 @@ def entry_c_codegen(
     if preprocess_params.calibrate_data_format == "npz":
         without_preprocess = True
 
-    if board != "anole" and board != "th1520":
+    if board != "th1520":
         # disable_nbg = True
         model_save = "run_only"
 
@@ -142,9 +141,6 @@ def entry_c_codegen(
     #
     with open(os.path.join(template_dir, "header.tp"), "r") as f:
         header_str = f.read()
-    if board == "anole":
-        header_str += '\n#include "shl_ovx.h"'
-    else:
         header_str += '\n#include "shl_ref.h"'
 
     if not without_preprocess:
@@ -184,20 +180,13 @@ def entry_c_codegen(
         function_str = f.read()
     # if disable_nbg == False:
     if model_save != "run_only":
-        if multithread and board == "anole":
-            function_str += "\nvoid *csinn_nbg(const char *nbg_file_name, int deviceIndex);"
-        else:
-            function_str += "\nvoid *csinn_nbg(const char *nbg_file_name);"
+        function_str += "\nvoid *csinn_nbg(const char *nbg_file_name);"
     else:
         function_str += "\n#define csinn_nbg(...) NULL"
     csinn_args = ""
     for i in range(len(input_shape)):
         csinn_args += "void *data" + str(i) + ", "
     function_str = function_str.replace("#_csinn_args#", csinn_args)
-    if multithread and board == "anole":
-        function_str = function_str.replace(
-            "void *csinn_(char *params);", "void *csinn_(char *params, int deviceIndex);"
-        )
     if board == "th1520" and model_save == "save_only":
         function_str = function_str.replace(
             "void *csinn_(char *params);", "#define csinn_(...) NULL"
@@ -253,31 +242,22 @@ def entry_c_codegen(
         postprocess_str = f.read()
 
     convert_fouput = ""
-    if board != "anole":
-        convert_fouput = "struct csinn_tensor *foutput = shl_ref_tensor_transform_f32(output);"
+    convert_fouput = "struct csinn_tensor *foutput = shl_ref_tensor_transform_f32(output);"
 
     postprocess_str = postprocess_str.replace("#_convert_fouput_#", convert_fouput)
 
     show_top5 = ""
     if "top5" in postprocess:
-        if board == "anole":
-            show_top5 = "shl_ovx_show_top5(i, sess);"
-        else:
-            show_top5 = "shl_show_top5(foutput, sess);"
+        show_top5 = "shl_show_top5(foutput, sess);"
     postprocess_str = postprocess_str.replace("#_show_top5_stats_#", show_top5)
 
-    free_anole_input_data = ""
     free_output_data = ""
-    if board == "anole":
-        free_anole_input_data = "free(input->data);"
-        free_output_data = "free(output->data);"
-    if board in ("th1520", "hth1520", "c906", "rvm", "c908", "c920"):
+    if board in ("th1520", "hth1520", "c906", "rvm", "c908", "c920", "c920v2"):
         free_output_data = "shl_ref_tensor_transform_free_f32(foutput);\n"
-        if board in ("c906", "rvm", "c908", "c920"):
+        if board in ("c906", "rvm", "c908", "c920", "c920v2"):
             free_output_data += " " * 8 + "if (!output->is_const) {\n"
             free_output_data += " " * 12 + "shl_mem_free(output->data);\n"
             free_output_data += " " * 8 + "}"
-    postprocess_str = postprocess_str.replace("#_free_anole_input_data_#", free_anole_input_data)
     postprocess_str = postprocess_str.replace("#_free_output_data_#", free_output_data)
 
     save_output = ""
@@ -291,13 +271,10 @@ def entry_c_codegen(
             " " * 8
             + 'snprintf(filename, FILE_LENGTH, "%s_output%u_%s.txt", filename_prefix, i, shape);\n'
         )
-        if board == "anole":
-            save_output += " " * 8 + "shl_ovx_save_output(i, filename, sess);\n"
-        else:
-            save_output += " " * 8 + "int output_size = csinn_tensor_size(foutput);\n"
-            save_output += (
-                " " * 8 + "save_data_to_file(filename, (float*)foutput->data, output_size);\n"
-            )
+        save_output += " " * 8 + "int output_size = csinn_tensor_size(foutput);\n"
+        save_output += (
+            " " * 8 + "save_data_to_file(filename, (float*)foutput->data, output_size);\n"
+        )
     postprocess_str = postprocess_str.replace("#_save_output_stats_#", save_output)
     code_str = code_str.replace("#_hhb_postprocess_def_#", postprocess_str)
 
@@ -405,10 +382,9 @@ def entry_c_codegen(
         get_input_data_stats += " " * 12 + "free_image_data(img);\n"
     code_str = code_str.replace("#_get_input_data_stats_#", get_input_data_stats)
 
-    run_csinn_stats_anole = ""
-    run_csinn_stats_thead = ""
+    run_csinn_stats_dynamic_shape = ""
     if dynamic_shape:
-        run_csinn_stats_anole += """
+        run_csinn_stats_dynamic_shape += """
     if (option->input_number) {
         for (int i = 0; i < option->input_number; i++) {
             input_tensors[i] = csinn_alloc_tensor(NULL);
@@ -426,14 +402,15 @@ def entry_c_codegen(
     else:
         for i in range(len(input_shape)):
             if i > 0:
-                run_csinn_stats_anole += "    "
-            run_csinn_stats_anole += f"input_tensors[{i}] = csinn_alloc_tensor(NULL);\n"
-            run_csinn_stats_anole += f"    input_tensors[{i}]->dim_count = {len(input_shape[i])};\n"
+                run_csinn_stats_dynamic_shape += "    "
+            run_csinn_stats_dynamic_shape += f"input_tensors[{i}] = csinn_alloc_tensor(NULL);\n"
+            run_csinn_stats_dynamic_shape += (
+                f"    input_tensors[{i}]->dim_count = {len(input_shape[i])};\n"
+            )
             for j, s in enumerate(input_shape[i]):
-                run_csinn_stats_anole += f"    input_tensors[{i}]->dim[{j}] = {s};\n"
+                run_csinn_stats_dynamic_shape += f"    input_tensors[{i}]->dim[{j}] = {s};\n"
 
-            run_csinn_stats_thead += "input[" + str(i) + "], "
-    code_str = code_str.replace("#_tensor_shape_#", run_csinn_stats_anole)
+    code_str = code_str.replace("#_tensor_shape_#", run_csinn_stats_dynamic_shape)
 
     return code_str
 
@@ -448,7 +425,6 @@ def main_c_codegen(
     model_save="run_only",
     without_preprocess=False,
     preprocess_params=None,
-    multithread=False,
     input_memory_type=None,
     q_scheme=None,
     dynamic_shape=None,
@@ -457,14 +433,9 @@ def main_c_codegen(
     """Generate the main.c file"""
 
     execute_path = get_execute_path()
-    if board == "anole":
-        if multithread:
-            main_file = os.path.join(execute_path, "config", "anole_multithread.tp")
-        else:
-            main_file = os.path.join(execute_path, "config", "anole.tp")
-    elif board in ("th1520", "hth1520"):
+    if board in ("th1520", "hth1520"):
         main_file = os.path.join(execute_path, "config", "th1520.tp")
-    elif board in ("c906", "rvm", "c908"):
+    elif board in ("c906", "rvm", "c908", "c920v2"):
         if dynamic_shape:
             main_file = os.path.join(execute_path, "config", "c906_cmdline.tp")
         else:
@@ -486,7 +457,6 @@ def main_c_codegen(
         model_save,
         without_preprocess,
         preprocess_params,
-        multithread,
         input_memory_type,
         q_scheme,
         dynamic_shape,
@@ -524,7 +494,6 @@ def jit_c_codegen(
         "run_only",
         True,
         preprocess_params,
-        False,
         None,
         q_scheme,
         None,

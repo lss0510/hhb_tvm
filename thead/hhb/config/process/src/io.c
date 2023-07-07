@@ -17,7 +17,7 @@
  * under the License.
  */
 
-/* auto generate by HHB_VERSION "2.4.0" */
+/* auto generate by HHB_VERSION "2.6.0" */
 
 #include "io.h"
 
@@ -87,7 +87,7 @@ void save_data_to_file(const char* filename, float* data, uint32_t size) {
 /*!
  * \brief Get the binary params char from model.params
  *
- * \param filename It is generally model.params for anole
+ * \param filename It is generally model.params
  * \return The char data of params
  *
  */

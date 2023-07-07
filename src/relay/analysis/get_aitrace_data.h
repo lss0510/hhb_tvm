@@ -207,13 +207,13 @@ class CalculationAmontIndicator {
     AiTraceDataFrame res;
     Map<String, ObjectRef> inner_map;
 
-    inner_map.Set("fused_mul_add", Integer(fused_mul_add));
-    inner_map.Set("mul", Integer(mul));
-    inner_map.Set("div", Integer(div));
-    inner_map.Set("add", Integer(add));
-    inner_map.Set("sub", Integer(sub));
-    inner_map.Set("exp", Integer(exp));
-    inner_map.Set("comp", Integer(comp));
+    inner_map.Set("fused_mul_add", Integer(IntImm(DataType::Int(64), fused_mul_add, Span())));
+    inner_map.Set("mul", Integer(IntImm(DataType::Int(64), mul, Span())));
+    inner_map.Set("div", Integer(IntImm(DataType::Int(64), div, Span())));
+    inner_map.Set("add", Integer(IntImm(DataType::Int(64), add, Span())));
+    inner_map.Set("sub", Integer(IntImm(DataType::Int(64), sub, Span())));
+    inner_map.Set("exp", Integer(IntImm(DataType::Int(64), exp, Span())));
+    inner_map.Set("comp", Integer(IntImm(DataType::Int(64), comp, Span())));
 
     res.Set("calculation_amount", inner_map);
     return res;
@@ -245,8 +245,8 @@ class MemoryIndicator {
     AiTraceDataFrame res;
     Map<String, ObjectRef> inner_map;
 
-    inner_map.Set("params", Integer(params));
-    inner_map.Set("output", Integer(output));
+    inner_map.Set("params", Integer(IntImm(DataType::Int(64), params, Span())));
+    inner_map.Set("output", Integer(IntImm(DataType::Int(64), output, Span())));
 
     res.Set("memory", inner_map);
     return res;

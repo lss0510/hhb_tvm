@@ -25,6 +25,7 @@
 #define TVM_RELAY_BACKEND_CONTRIB_CSINN_QUANT_CAL_H_
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "csinn.h"
@@ -33,7 +34,7 @@ namespace tvm {
 namespace relay {
 namespace contrib {
 namespace csinn {
-struct QConfig_ {
+struct QConfig_ : public Object {
   string quantization_scheme;
   string dtype_input;
   string dtype_weight;
@@ -47,6 +48,44 @@ struct QConfig_ {
   string calibrate_mode;
   double high_bound_scale;
   double low_bound_scale;
+
+ public:
+  void VisitAttrs(AttrVisitor* v) {
+    v->Visit("quantization_scheme", &quantization_scheme);
+    v->Visit("dtype_input", &dtype_input);
+    v->Visit("dtype_weight", &dtype_weight);
+    v->Visit("dtype_activation", &dtype_activation);
+    v->Visit("nbit_input", &nbit_input);
+    v->Visit("nbit_weight", &nbit_weight);
+    v->Visit("nbit_activation", &nbit_activation);
+    v->Visit("activate_quantized_type", &activate_quantized_type);
+    v->Visit("weight_quantized_type", &weight_quantized_type);
+    v->Visit("fuse_zp2bias", &fuse_zp2bias);
+    v->Visit("calibrate_mode", &calibrate_mode);
+    v->Visit("high_bound_scale", &high_bound_scale);
+    v->Visit("low_bound_scale", &low_bound_scale);
+  }
+};
+
+class QnnConfig : public ObjectRef {
+ public:
+  QnnConfig() {
+    auto n = make_object<QConfig_>();
+    data_ = std::move(n);
+  }
+
+  /*!
+   * \brief Construct from an object pointer.
+   * \param n The object pointer.
+   */
+  explicit QnnConfig(ObjectPtr<Object> n) : ObjectRef(n) {}
+
+  /*! \return Mutable pointers to the node. */
+  QConfig_* operator->() const {
+    auto* ptr = get_mutable();
+    ICHECK(ptr != nullptr);
+    return static_cast<QConfig_*>(ptr);
+  }
 };
 
 class QuantCalculator {

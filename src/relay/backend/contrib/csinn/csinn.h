@@ -92,7 +92,7 @@ struct output_element {
   std::vector<string> names;
 };
 
-#define HHB_VERSION "2.4.0"
+#define HHB_VERSION "2.6.0"
 
 /*! \brief Attributes to store the options for CSI-NN2 */
 struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
@@ -256,7 +256,6 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
     this->output_dir_ = dirnameOf(this->params_path_);
 
     this->debug_level_ = opt_cfg->debug_level;
-    this->multithread = opt_cfg->multi_thread;
     this->model_save = opt_cfg->model_save;
     this->model_priority = opt_cfg->model_priority;
     this->dynamic_shape_ = opt_cfg->dynamic_shape;
@@ -270,8 +269,6 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
 
     if (this->target_ == "th1520" && !auto_hybrid_quantization) {
       target_name_ = "CSINN_TH1520";
-    } else if (this->target_ == "anole") {
-      target_name_ = "CSINN_ANOLE";
     } else if (this->target_ == "dp1k") {
       target_name_ = "CSINN_DP1K";
     } else if (this->target_ == "e907") {
@@ -284,6 +281,8 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       target_name_ = "CSINN_C908";
     } else if (this->target_ == "c920") {
       target_name_ = "CSINN_C920";
+    } else if (this->target_ == "c920v2") {
+      target_name_ = "CSINN_C920V2";
     } else if (target_ == "hth1520" || (target_ == "th1520" && auto_hybrid_quantization)) {
       target_name_ = "CSINN_REF";
     } else if (target_ == "x86_ref") {
@@ -622,6 +621,8 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
     return ret;
   }
 
+  QConfig_* GetQuantConfig() { return cfg; }
+
  protected:
   Expr expr_;
   std::vector<output_element> output_list_;
@@ -647,7 +648,6 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
 
   string output_dir_{"."};
 
-  bool multithread{false};
   string model_save{""};
   int model_priority;
   bool dynamic_shape_;
