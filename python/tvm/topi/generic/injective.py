@@ -17,9 +17,9 @@
 # pylint: disable=invalid-name
 """generic declaration and schedules."""
 from __future__ import absolute_import as _abs
-
 import tvm
 from tvm import te
+from .default import default_schedule as _default_schedule
 
 
 def schedule_injective_from_existing(sch, out):
@@ -64,6 +64,23 @@ def schedule_injective(outs):
     te.schedule.AutoInlineInjective(s)
     schedule_injective_from_existing(s, x)
     return s
+
+
+def schedule_add(outs):
+    """Schedule for add
+
+    Parameters
+    ----------
+    outs: Array of Tensor
+          The computation graph description of softmax
+          in the format of an array of tensors.
+
+    Returns
+    -------
+    sch: Schedule
+        The computation schedule for the op.
+    """
+    return _default_schedule(outs, False)
 
 
 schedule_elemwise = schedule_injective

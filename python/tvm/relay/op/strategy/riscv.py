@@ -69,11 +69,42 @@ def softmax_strategy_cpu(attrs, inputs, out_type, target):
     """softmax riscv strategy"""
     strategy = _op.OpStrategy()
     strategy.add_implementation(
-        wrap_compute_softmax(topi.nn.softmax),
+        wrap_compute_softmax(topi.nn.softmax_rvv),
         wrap_topi_schedule(topi.riscv.schedule_softmax),
         name="softmax.riscv",
     )
     return strategy
+
+
+@reshape_strategy.register("riscv")
+def reshape_strategy_cpu(attrs, inputs, out_type, target):
+    """reshape riscv strategy"""
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_compute_reshape(topi.reshape),
+        wrap_topi_schedule(topi.riscv.schedule_reshape),
+        name="reshape.riscv",
+    )
+    return strategy
+
+
+@layout_transform_strategy.register("riscv")
+def layout_transform_strategy_cpu(attrs, inputs, out_type, target):
+    """layout_transform riscv strategy"""
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_compute_layout_transform(topi.layout_transform),
+        wrap_topi_schedule_with_attrs(topi.riscv.schedule_layout_transform),
+        name="layout_transform.riscv",
+    )
+    return strategy
+
+
+@schedule_transpose.register("riscv")
+def schedule_transpose_cpu(attrs, outs, target):
+    """schedule transpose ops for riscv"""
+    with target:
+        return topi.riscv.schedule_transpose(outs, attrs)
 
 
 @fast_softmax_strategy.register("riscv")
@@ -96,6 +127,34 @@ def log_softmax_strategy_cpu(attrs, inputs, out_type, target):
         wrap_compute_softmax(topi.nn.log_softmax),
         wrap_topi_schedule(topi.riscv.schedule_softmax),
         name="log_softmax.riscv",
+    )
+    return strategy
+
+
+def wrap_add_schedule(topi_schedule, broadcast_flag):
+    """Wrap add schedule"""
+
+    def wrapper(attrs, outs, target):
+        with target:
+            return topi_schedule(outs, broadcast_flag)
+
+    return wrapper
+
+
+@add_strategy.register("riscv")
+def add_strategy_cpu(attrs, inputs, out_type, target):
+    """add riscv strategy"""
+    strategy = _op.OpStrategy()
+    if inputs[0].shape[-1] > inputs[1].shape[-1]:
+        broadcast_flag = 1
+    elif inputs[0].shape[-1] < inputs[1].shape[-1]:
+        broadcast_flag = 2
+    else:
+        broadcast_flag = 0
+    strategy.add_implementation(
+        wrap_topi_compute(topi.add),
+        wrap_add_schedule(topi.riscv.schedule_add, broadcast_flag),
+        name="add.riscv",
     )
     return strategy
 

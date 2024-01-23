@@ -44,3 +44,6 @@ from .scatter import *
 from .group_conv2d import *
 from .math_alter_op import *
 from .concat import *
+from .reshape import *
+from .layout_transform import *
+from .transpose import *

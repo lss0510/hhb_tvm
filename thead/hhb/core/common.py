@@ -41,8 +41,8 @@ logger = logging.getLogger("HHB")
 
 def hhb_version():
     """Version information"""
-    __version__ = "2.6.0"
-    __build_time__ = "20230830"
+    __version__ = "2.8.1"
+    __build_time__ = "20231130"
     return "HHB version: " + __version__ + ", build " + __build_time__
 
 
@@ -152,9 +152,15 @@ def get_parameters_info(params_name="unknown"):
         def inner_wrapper(parser):
             if not isinstance(parser, argparse.ArgumentParser):
                 raise HHBException("invalid parser:{}".format(parser))
-            before_args = vars(parser.parse_known_args()[0])
+            if parser.prog == "hhb_api":
+                before_args = vars(parser.parse_known_args([])[0])
+            else:
+                before_args = vars(parser.parse_known_args()[0])
             value = func(parser)
-            after_args = vars(parser.parse_known_args()[0])
+            if parser.prog == "hhb_api":
+                after_args = vars(parser.parse_known_args([])[0])
+            else:
+                after_args = vars(parser.parse_known_args()[0])
             ALL_ARGUMENTS_INFO[params_name] = {
                 key: value for key, value in after_args.items() if key not in before_args
             }
@@ -610,3 +616,26 @@ python hhb.py profiler \
         logger.error("%s dose not exist." % output_dir)
     with open(os.path.join(output_dir, "README.md"), "w") as f:
         f.writelines(content)
+
+
+def hhb_deprecated_check(deprecated_content, since_version=None, substitute=""):
+    """check deprecated args."""
+    msg = f"{deprecated_content} will be deprecated"
+    if since_version:
+        msg += f" since {since_version}"
+    if substitute:
+        msg += f", recommend using {substitute} instead"
+    msg += "."
+    logger.warning(msg)
+
+
+def to_json_with_formatted(data, path):
+    """save json file with beautifier format."""
+    import jsbeautifier
+    import json
+
+    options = jsbeautifier.default_options()
+    options.indent_size = 2
+    res = jsbeautifier.beautify(json.dumps(data), options)
+    with open(path, "w") as f:
+        f.write(res)

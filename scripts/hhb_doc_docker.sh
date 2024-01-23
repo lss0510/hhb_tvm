@@ -27,12 +27,12 @@ docker run --rm -v $script_dir/../../hhb:/mnt hhb_build:0.5 sh -c "cd mnt/ && rm
 # docker run --rm -v $script_dir/../../hhb:/mnt yl-hub.eng.t-head.cn/flow-design/hhb_build:0.9 sh -c "cd mnt/ && ./scripts/hhb_doc.sh"
 docker run --rm -v $script_dir/../../hhb:/mnt hhb_build:0.5 sh -c "cd mnt/ && ./scripts/hhb_doc.sh"
 
-#cd docs/_build/html
-#python3 -m http.server
-#
-#echo "Now you can browse the html pages as these two steps:"
-#echo "1. execute the following commands to start server:"
-#echo "    cd docs/_build/html"
-#echo "    python3 -m http.server"
-#echo "2. switch to your browser and type this url:"
-#echo "    server_ip:8000"
+cd docs/_build/html
+python3 -m http.server
+
+echo "Now you can browse the html pages as these two steps:"
+echo "1. execute the following commands to start server:"
+echo "    cd docs/_build/html"
+echo "    python3 -m http.server"
+echo "2. switch to your browser and type this url:"
+echo "    server_ip:8000"

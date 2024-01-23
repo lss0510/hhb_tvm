@@ -18,6 +18,7 @@
 import logging
 import os
 from typing import List, Union
+import copy
 
 import numpy as np
 import onnx
@@ -26,9 +27,12 @@ from onnxsim import simplify
 import tvm
 from tvm import relay
 from tvm.contrib import graph_executor
-from tvm.contrib.target.onnx import to_onnx
-from tvm.relay.quantize.quantize_hhb import _bind_params
-from tvm.relay.quantize.quantize_hhb import optimization_phase0
+from tvm.relay.quantize.quantize_hhb import _bind_params, check_bn_variance
+from tvm.relay.quantize.quantize_hhb import optimization_phase0, InsertNOp, InsertRelu
+from tvm.relay.quantize.quantize_hhb import save_const_output, _check_unsupported_ops
+from tvm.relay.quantize._convert_to_csi import convert_to_csi_qnn, fuse_layer
+from tvm.relay.quantize.qnn2onnx import qnn_to_onnx
+from tvm.relay.quantize.qnn_transform import QNNConvertReshapeToFlatten
 
 from .arguments_manage import ArgumentFilter, Config
 from .frontend_manage import import_model, insert_preprocess_node, get_io_info_from_onnx
@@ -144,6 +148,11 @@ def optimize_model(
     new_input_shape = args.input_shape
     new_output_name = args.output_name
     if opt_level == 3 or not is_onnx:
+        logger.log(
+            LOG,
+            "Current model is not from onnx or you set opt_level=3, "
+            "so start to optimize model with qnn...",
+        )
         # convert to relay ir
         mod, params = import_model(
             model_file,
@@ -152,29 +161,67 @@ def optimize_model(
             new_input_shape,
             new_output_name,
         )
-        if params:
-            mod["main"] = _bind_params(mod["main"], params)
-            params = None
+        inter_new_args = copy.deepcopy(args)
+        inter_filter = ArgumentFilter(inter_new_args)
+        all_filters = [
+            collect_quantization_config,
+            set_quantize_params_by_board,
+            collect_codegen_config,
+            set_codegen_config,
+        ]
+        extra_args = AttributeDict()
+        extra_args.input_shape = new_input_shape
+        extra_args.input_num = len(new_input_shape)
+        extra_args.output_num = len(new_output_name)
+        inter_filter.filter_argument(all_filters, extra=extra_args)
+        inter_args = inter_filter.filtered_args
+        inter_config = get_config_dict(inter_args)
 
-        # optimize relay ir
-        mod = optimization_phase0(mod)
-        mod = relay.transform.InferType()(mod)
+        with tvm.transform.PassContext(
+            opt_level=3, config={"relay.ext.csinn.options": inter_config}
+        ):
+            # optimize relay ir and convert to qnn ir
+            if params:
+                mod["main"] = _bind_params(mod["main"], params)
+                params = None
+
+            mod = optimization_phase0(mod)
+            if args.board in ("th1520", "hth1520") and args.quantization_scheme not in [
+                "int16_sym",
+                "int8_sym",
+            ]:
+                mod = InsertNOp(mod)
+
+            if args.board in ("th1520", "hth1520"):
+                # fix sigmoid + mul acc bug in th1520 npu
+                mod = InsertRelu(mod)
+            mod = check_bn_variance(mod)
+            mod = save_const_output(mod, args.output)
+            _ = _check_unsupported_ops(args.board, mod)
+            mod = convert_to_csi_qnn(
+                mod,
+                None,
+                inter_config["channel_quantization"],
+                inter_config["channel_quantization_ratio_threshold"],
+            )
+            mod = fuse_layer(mod, inter_config)
+            mod = QNNConvertReshapeToFlatten()(mod)
+            mod = relay.transform.InferType()(mod)
 
         # convert to onnx
-        relay_onnx_path = os.path.join(args.output, "model_relay_opt.onnx")
-        onnx_model = to_onnx(mod, {}, "relay")
+        qnn_onnx_path = os.path.join(args.output, "model_qnn_opt.onnx")
+        onnx_model = qnn_to_onnx(mod, {}, "qnn_csi")
         # simplify onnx
         onnx_model_sim, check = simplify(onnx_model)
         if check:
-            onnx.save(onnx_model_sim, relay_onnx_path)
+            onnx.save(onnx_model_sim, qnn_onnx_path)
         else:
-            onnx.save(onnx_model, relay_onnx_path)
-            logger.warning("Fail to optimize onnx with onnxsim, back to relay onnx.")
-        logger.debug("New model with relay optimization is save in %s", relay_onnx_path)
+            onnx.save(onnx_model, qnn_onnx_path)
+            logger.warning("Fail to optimize onnx with onnxsim, back to qnn onnx.")
+        logger.log(LOG, "Optimized model with qnn optimization is save in %s", qnn_onnx_path)
 
-        new_model_path = [relay_onnx_path]
-
-        new_input_name, new_input_shape, new_output_name, _ = get_io_info_from_onnx(relay_onnx_path)
+        new_model_path = [qnn_onnx_path]
+        new_input_name, new_input_shape, new_output_name, _ = get_io_info_from_onnx(qnn_onnx_path)
 
     # create calibrate dataset
     args_filter = ArgumentFilter(args)

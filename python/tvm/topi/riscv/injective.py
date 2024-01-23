@@ -21,6 +21,7 @@ from tvm.topi import tag
 from tvm.topi.generic.injective import (
     schedule_injective_from_existing as schedule_injective_for_concat,
 )
+from tvm.topi.riscv.utils import intrin_add_vv_broadcast, get_simd_32bit_lanes
 from ..utils import is_empty_shape
 
 
@@ -45,24 +46,6 @@ def schedule_injective_from_existing(sch, out):
         sch[out].parallel(fused)
     elif len(sch[out].op.axis) >= 1:
         sch[out].parallel(sch[out].op.axis[0])
-
-    # Vectorize the inner most for loop. Tiling first to get a const extent
-    # if len(sch[out].op.axis) >= 1:
-    #     l = sch[out].op.axis[-1]
-
-    #     for bn in range(factor, 0, -1):
-    #         if last_axis % bn == 0:
-    #             factor = bn
-    #             break
-
-    #     lo, li = sch[out].split(l, factor=factor)
-    #     # load_intrin = intrin_load(factor)
-    #     # sch[out].tensorize(li, load_intrin)
-
-    #     # for 1D loop, the above split will break the parallel axis
-    #     # Need to make the outer loop parallel again
-    #     if len(sch[out].op.axis) == 1:
-    #         sch[out].parallel(lo)
 
     return sch
 
@@ -169,3 +152,45 @@ def schedule_concatenate_cpu(outs):
 
 schedule_elemwise = schedule_injective
 schedule_broadcast = schedule_injective
+
+
+def schedule_add(outs, broadcast_flag):
+    """Schedule for add
+
+    Parameters
+    ----------
+    outs: Array of Tensor
+          The computation graph description of add
+          in the format of an array of tensors.
+
+    Returns
+    -------
+    sch: Schedule
+        The computation schedule for the op.
+    """
+    outs = [outs] if isinstance(outs, te.tensor.Tensor) else outs
+    s = te.create_schedule([x.op for x in outs])
+    _schedule_add(s, outs[0], broadcast_flag)
+    return s
+
+
+def _schedule_add(sch, out, broadcast_flag):
+    dtype = sch[out].op.input_tensors[0].dtype
+    if (dtype == "float32") | (dtype == "float16"):
+        if len(sch[out].op.axis) > 1:
+            fused = sch[out].fuse(*sch[out].op.axis[0 : len(sch[out].op.axis)])
+            sch[out].parallel(fused)
+            split_axis = fused
+        else:
+            split_axis = sch[out].op.axis[-1]
+        simd_width = get_simd_32bit_lanes()
+        factor = 1
+        for tmp in range(simd_width, 0, -1):
+            if out.shape[-1] % tmp == 0:
+                factor = tmp
+                break
+        outer, inner = sch[out].split(split_axis, factor)
+        sch[out].parallel(outer)
+        my_add = intrin_add_vv_broadcast(factor, dtype, broadcast_flag)
+        sch[out].tensorize(inner, my_add)
+    return sch

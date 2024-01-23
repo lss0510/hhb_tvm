@@ -73,6 +73,8 @@ string CSINNTensor::to_layout(int32_t layout) {
     return "CSINN_LAYOUT_O32I32";
   } else if (layout == CSINN_LAYOUT_O32HWI32) {
     return "CSINN_LAYOUT_O32HWI32";
+  } else if (layout == CSINN_LAYOUT_IOHW) {
+    return "CSINN_LAYOUT_IOHW";
   } else {
     return "CSINN_LAYOUT_NULL";
   }
@@ -153,11 +155,18 @@ std::vector<string> CSINNTensor::serialize(size_t qoffset, size_t coffset) {
   }
   t0 << name << "->dim_count = " << tensor->dim_count;
   push_str(t0);
-  t0 << name << "->qinfo = (struct csinn_quant_info *)(params_base + " << std::to_string(qoffset)
-     << ")";
+
+  if (tensor->quant_channel != 1) {
+    t0 << "csinn_realloc_quant_info(" << name << ", " << std::to_string(tensor->quant_channel)
+       << ")";
+    push_str(t0);
+  }
+
+  t0 << "memcpy(" << name << "->qinfo"
+     << ", params_base + " << std::to_string(qoffset) << ", sizeof(struct csinn_quant_info) * "
+     << std::to_string(tensor->quant_channel) << ")";
   push_str(t0);
-  t0 << name << "->quant_channel = " << std::to_string(tensor->quant_channel);
-  push_str(t0);
+
   for (string s : astr) {
     str.push_back(s);
   }

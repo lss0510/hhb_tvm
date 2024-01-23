@@ -18,7 +18,7 @@
 """riscv nn operators"""
 from tvm import te
 from ..utils import traverse_inline
-from .utils import get_simd_32bit_lanes
+from .utils import get_simd_32bit_lanes, intrin_div, intrin_sub, intrin_sum, intrin_max
 
 
 def _schedule_softmax(softmax_op, s, outs):
@@ -26,7 +26,8 @@ def _schedule_softmax(softmax_op, s, outs):
     if op_tag == "softmax_output":
         exp = softmax_op.input_tensors[0]
         expsum = softmax_op.input_tensors[1]
-        max_elem = s[exp].op.input_tensors[1]
+        sub = s[exp].op.input_tensors[0]
+        max_elem = s[sub].op.input_tensors[1]
         delta = None
         axis = int(softmax_op.attrs["axis"])
     elif op_tag == "fast_softmax_output":
@@ -51,13 +52,100 @@ def _schedule_softmax(softmax_op, s, outs):
 
     # only parallelize outer dimensions up to axis
     outer_axes = [s[softmax_op].op.axis[i] for i in range(0, axis)]
-    # inner_axes = s[softmax_op].op.axis[len(outer_axes) :]
+    inner_axes = s[softmax_op].op.axis[len(outer_axes) :]
     fused_outer_axes = s[softmax_op].fuse(*outer_axes)
-    s[softmax_op].parallel(fused_outer_axes)
 
-    # move computations with the same outer dimensions under the same root
+    s[softmax_op].parallel(fused_outer_axes)
+    #
+    ## move computations with the same outer dimensions under the same root
     s[max_elem].compute_at(s[softmax_op], fused_outer_axes)
     s[expsum].compute_at(s[softmax_op], fused_outer_axes)
+    s[exp].compute_at(s[softmax_op], fused_outer_axes)
+    s[sub].compute_at(s[softmax_op], fused_outer_axes)
+
+    if op_tag == "softmax_output":
+        dtype = softmax_op.input_tensors[0].dtype
+        simd_width = get_simd_32bit_lanes()
+        factor = 1
+        for tmp in range(simd_width, 0, -1):
+            if exp.shape[-1] % tmp == 0:
+                factor = tmp
+                break
+        flag = axis == len(s[softmax_op].op.axis) - 1
+        inner_axes = s[sub].op.axis[-1]
+        outer, inner = s[sub].split(inner_axes, factor)
+        s[sub].parallel(outer)
+        my_sub = intrin_sub(factor, dtype, flag)
+        s[sub].tensorize(inner, my_sub)
+
+        inner_axes = s[softmax_op].op.axis[-1]
+        outer, inner = s[softmax_op].split(inner_axes, factor)
+        s[softmax_op].parallel(outer)
+        my_div = intrin_div(factor, dtype, flag)
+        s[softmax_op].tensorize(inner, my_div)
+
+        if flag:
+            inner_axes = s[expsum].op.axis[-1]
+            outer, inner = s[expsum].split(inner_axes, 1)
+            s[expsum].parallel(outer)
+            my_sum = intrin_sum(simd_width, exp.shape[axis], dtype)
+            s[expsum].tensorize(inner, my_sum)
+
+            inner_axes = s[max_elem].op.axis[-1]
+            outer, inner = s[max_elem].split(inner_axes, 1)
+            s[max_elem].parallel(outer)
+            my_max = intrin_max(simd_width, exp.shape[axis], dtype)
+            s[max_elem].tensorize(inner, my_max)
+
+        else:
+            if axis == 0:
+                red_axes = s[expsum].op.axis[len(outer_axes)]
+                inner_axes = s[expsum].op.axis[len(outer_axes) + 1 :]
+                outer, inner = s[expsum].split(red_axes, expsum.shape[0])
+                s[expsum].reorder(inner, *inner_axes, outer)
+                s[expsum].parallel(outer)
+                stride = 1
+                num = len(s[softmax_op].op.axis) - axis
+                for i in range(axis + 1, len(s[softmax_op].op.axis)):
+                    stride *= exp.shape[i]
+                my_sum = intrin_sum(simd_width, exp.shape[axis], dtype, num, stride)
+                s[expsum].tensorize(outer, my_sum)
+
+                red_axes = s[max_elem].op.axis[len(outer_axes)]
+                inner_axes = s[max_elem].op.axis[len(outer_axes) + 1 :]
+                outer, inner = s[max_elem].split(red_axes, max_elem.shape[0])
+                s[max_elem].reorder(inner, *inner_axes, outer)
+                s[max_elem].parallel(outer)
+                stride = 1
+                num = len(s[softmax_op].op.axis) - axis
+                for i in range(axis + 1, len(s[softmax_op].op.axis)):
+                    stride *= exp.shape[i]
+                my_max = intrin_max(simd_width, exp.shape[axis], dtype, num, stride)
+                s[max_elem].tensorize(outer, my_max)
+            else:
+                red_axes = s[expsum].op.axis[len(outer_axes) - 1]
+                inner_axes = s[expsum].op.axis[len(outer_axes) :]
+                outer, inner = s[expsum].split(red_axes, 1)
+                s[expsum].reorder(*inner_axes, inner)
+                s[expsum].parallel(outer)
+                stride = 1
+                num = len(s[softmax_op].op.axis) - axis
+                for i in range(axis + 1, len(s[softmax_op].op.axis)):
+                    stride *= exp.shape[i]
+                my_sum = intrin_sum(simd_width, exp.shape[axis], dtype, num, stride)
+                s[expsum].tensorize(inner, my_sum)
+
+                red_axes = s[max_elem].op.axis[len(outer_axes) - 1]
+                inner_axes = s[max_elem].op.axis[len(outer_axes) :]
+                outer, inner = s[max_elem].split(red_axes, 1)
+                s[max_elem].reorder(*inner_axes, inner)
+                s[max_elem].parallel(outer)
+                stride = 1
+                num = len(s[softmax_op].op.axis) - axis
+                for i in range(axis + 1, len(s[softmax_op].op.axis)):
+                    stride *= exp.shape[i]
+                my_max = intrin_max(simd_width, exp.shape[axis], dtype, num, stride)
+                s[max_elem].tensorize(inner, my_max)
 
     if delta is not None:
         s[exp].compute_inline()

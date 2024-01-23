@@ -21,6 +21,7 @@ import logging
 import numpy as np
 from tvm import relay
 from tvm.ir.tensor_type import TensorType
+from tvm.ir import transform
 from ..op.strategy.generic import is_depthwise_conv2d
 from ..frontend.common import infer_shape as infer_call
 from ..expr_functor import ExprMutator
@@ -161,44 +162,62 @@ def split_group(in_data, weight, bias, attr, max_groups, out_shape=None):
     return ret
 
 
-class MaxGroupSpliter(ExprMutator):
+@function_pass(opt_level=1)
+class MaxGroupSpliter:
     """Split depthwise by group"""
 
     def __init__(self, max_groups=10, target=""):
-        super(MaxGroupSpliter, self).__init__()
         self.max_groups = max_groups
         self.target = target
 
-    def visit_call(self, call):
-        op_args = [self.visit(arg) for arg in call.args]
-        if call.op.name == "qnn.csi.conv2d":
-            conv_attrs = _qnn_attrs(call.attrs)
-            # if not depthwise conv
-            if (
-                conv_attrs["groups"] <= self.max_groups
-                or conv_attrs["groups"] != conv_attrs["channels"]
-            ):
-                return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            in_data = op_args[0]
-            weight = op_args[1].data.asnumpy()
-            bias = op_args[2].data.asnumpy()
-            out_shape = call.checked_type.shape
-            new_call = split_group(in_data, weight, bias, conv_attrs, self.max_groups, out_shape)
-            new_call.__checked_type__ = call.checked_type
-            return new_call
+    def transform_function(self, func, mod, ctx):
+        """
+        split max group.
+        """
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        max_group_spliter = self
 
-        if call.op.name == "qnn.csi.relu":
-            if isinstance(op_args[0], Call) and op_args[0].op.name == "qnn.csi.concatenate":
-                return split_relu(call, op_args, self.target)
+        class MaxGroupSpliterMutator(relay.ExprMutator):
+            """_summary_
 
-        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-        new_call.__checked_type__ = call.checked_type
-        return new_call
+            Args:
+                relay (_type_): _description_
+            """
 
-    def visit_function(self, fn):
-        new_params = [self.visit(x) for x in fn.params]
-        new_body = self.visit(fn.body)
-        return function.Function(list(new_params), new_body)
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                if call.op.name == "qnn.csi.conv2d":
+                    conv_attrs = _qnn_attrs(call.attrs)
+                    # if not depthwise conv
+                    if (
+                        conv_attrs["groups"] <= max_group_spliter.max_groups
+                        or conv_attrs["groups"] != conv_attrs["channels"]
+                    ):
+                        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                    in_data = op_args[0]
+                    weight = op_args[1].data.asnumpy()
+                    bias = op_args[2].data.asnumpy()
+                    out_shape = call.checked_type.shape
+                    new_call = split_group(
+                        in_data, weight, bias, conv_attrs, max_group_spliter.max_groups, out_shape
+                    )
+                    new_call.__checked_type__ = call.checked_type
+                    return new_call
+
+                if call.op.name == "qnn.csi.relu":
+                    if isinstance(op_args[0], Call) and op_args[0].op.name == "qnn.csi.concatenate":
+                        return split_relu(call, op_args, max_group_spliter.target)
+
+                new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                new_call.__checked_type__ = call.checked_type
+                return new_call
+
+            def visit_function(self, fn):
+                new_params = [self.visit(x) for x in fn.params]
+                new_body = self.visit(fn.body)
+                return function.Function(list(new_params), new_body)
+
+        return MaxGroupSpliterMutator().visit(func)
 
 
 def split_channel(in_data, weight, bias, attr, max_out_channel, out_shape=None):
@@ -260,42 +279,66 @@ def split_channel(in_data, weight, bias, attr, max_out_channel, out_shape=None):
     return ret
 
 
-class OutChannelSpliter(ExprMutator):
+@function_pass(opt_level=1)
+class OutChannelSpliter:
     """Split common convolution by out_channel"""
 
     def __init__(self, max_out_channel=32, target=""):
-        super(OutChannelSpliter, self).__init__()
         self.max_out_channel = max_out_channel
         self.target = target
 
-    def visit_call(self, call):
-        op_args = [self.visit(arg) for arg in call.args]
-        if call.op.name == "qnn.csi.conv2d":
-            in_data = op_args[0]
-            weight = op_args[1].data.asnumpy()
-            bias = op_args[2].data.asnumpy()
-            conv_attrs = _qnn_attrs(call.attrs)
-            # for depthwise convolution and group convolution
-            if conv_attrs["groups"] != 1 or weight.shape[0] <= self.max_out_channel:
-                return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            # for common convolution
-            out_shape = infer_shape(call)
-            new_call = split_channel(
-                in_data, weight, bias, conv_attrs, self.max_out_channel, out_shape
-            )
-            return new_call
+    def transform_function(self, func, mod, ctx):
+        """
+        split out_channel
+        """
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        out_channel_spliter = self
 
-        if call.op.name == "qnn.csi.relu":
-            if isinstance(op_args[0], Call) and op_args[0].op.name == "qnn.csi.concatenate":
-                return split_relu(call, op_args, self.target)
+        class OutChannelSpliterMutator(relay.ExprMutator):
+            """_summary_
 
-        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-        return new_call
+            Args:
+                relay (_type_): _description_
+            """
 
-    def visit_function(self, fn):
-        new_params = [self.visit(x) for x in fn.params]
-        new_body = self.visit(fn.body)
-        return function.Function(list(new_params), new_body)
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                if call.op.name == "qnn.csi.conv2d":
+                    in_data = op_args[0]
+                    weight = op_args[1].data.asnumpy()
+                    bias = op_args[2].data.asnumpy()
+                    conv_attrs = _qnn_attrs(call.attrs)
+                    # for depthwise convolution and group convolution
+                    if (
+                        conv_attrs["groups"] != 1
+                        or weight.shape[0] <= out_channel_spliter.max_out_channel
+                    ):
+                        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                    # for common convolution
+                    out_shape = infer_shape(call)
+                    new_call = split_channel(
+                        in_data,
+                        weight,
+                        bias,
+                        conv_attrs,
+                        out_channel_spliter.max_out_channel,
+                        out_shape,
+                    )
+                    return new_call
+
+                if call.op.name == "qnn.csi.relu":
+                    if isinstance(op_args[0], Call) and op_args[0].op.name == "qnn.csi.concatenate":
+                        return split_relu(call, op_args, out_channel_spliter.target)
+
+                new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                return new_call
+
+            def visit_function(self, fn):
+                new_params = [self.visit(x) for x in fn.params]
+                new_body = self.visit(fn.body)
+                return function.Function(list(new_params), new_body)
+
+        return OutChannelSpliterMutator().visit(func)
 
 
 def split_kernel_size(in_data, weight, bias, attr, max_kernel_size, weight_byte):
@@ -313,41 +356,66 @@ def split_kernel_size(in_data, weight, bias, attr, max_kernel_size, weight_byte)
     return split_channel(in_data, weight, bias, attr, max_out_channel)
 
 
-class KernelSizeSpliter(ExprMutator):
+@function_pass(opt_level=1)
+class KernelSizeSpliter:
     """Split common convolution by filter size"""
 
-    def __init__(self, config, max_kernel_size=None):
-        super(KernelSizeSpliter, self).__init__()
+    def __init__(self, nbit_weight, target, max_kernel_size=None):
         self.max_kernel_size = max_kernel_size
-        self.weight_byte = config.nbit_weight // 8
-        self.target = config.target
+        self.weight_byte = nbit_weight // 8
+        self.target = target
 
-    def visit_call(self, call):
-        op_args = [self.visit(arg) for arg in call.args]
-        if call.op.name == "qnn.csi.conv2d":
-            in_data = op_args[0]
-            weight = op_args[1].data.asnumpy()
-            bias = op_args[2].data.asnumpy()
-            conv_attrs = _qnn_attrs(call.attrs)
-            # for depthwise convolution and group convolution
-            if conv_attrs["groups"] != 1 or weight.size * self.weight_byte <= self.max_kernel_size:
+    def transform_function(self, func, mod, ctx):
+        """
+        split kernel size.
+        """
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        kernel_size_spliter = self
+
+        class KernelSizeSpliterMutator(relay.ExprMutator):
+            """_summary_
+
+            Args:
+                relay (_type_): _description_
+            """
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                if call.op.name == "qnn.csi.conv2d":
+                    in_data = op_args[0]
+                    weight = op_args[1].data.asnumpy()
+                    bias = op_args[2].data.asnumpy()
+                    conv_attrs = _qnn_attrs(call.attrs)
+                    # for depthwise convolution and group convolution
+                    if (
+                        conv_attrs["groups"] != 1
+                        or weight.size * kernel_size_spliter.weight_byte
+                        <= kernel_size_spliter.max_kernel_size
+                    ):
+                        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                    # for common convolution
+                    new_call = split_kernel_size(
+                        in_data,
+                        weight,
+                        bias,
+                        conv_attrs,
+                        kernel_size_spliter.max_kernel_size,
+                        kernel_size_spliter.weight_byte,
+                    )
+                    return new_call
+
+                if call.op.name == "qnn.csi.relu":
+                    if isinstance(op_args[0], Call) and op_args[0].op.name == "qnn.csi.concatenate":
+                        return split_relu(call, op_args, kernel_size_spliter.target)
+
                 return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            # for common convolution
-            new_call = split_kernel_size(
-                in_data, weight, bias, conv_attrs, self.max_kernel_size, self.weight_byte
-            )
-            return new_call
 
-        if call.op.name == "qnn.csi.relu":
-            if isinstance(op_args[0], Call) and op_args[0].op.name == "qnn.csi.concatenate":
-                return split_relu(call, op_args, self.target)
+            def visit_function(self, fn):
+                new_params = [self.visit(x) for x in fn.params]
+                new_body = self.visit(fn.body)
+                return function.Function(list(new_params), new_body)
 
-        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-
-    def visit_function(self, fn):
-        new_params = [self.visit(x) for x in fn.params]
-        new_body = self.visit(fn.body)
-        return function.Function(list(new_params), new_body)
+        return KernelSizeSpliterMutator().visit(func)
 
 
 def _infer_shape(in_shape, w_shape, padding, dilation, strides):
@@ -830,165 +898,192 @@ def split_group_conv2d_input(
     raise Exception("Sram size is too small to split row. hhb unsupported column splitting now.")
 
 
-class SramSizeSpliter(ExprMutator):
+@function_pass(opt_level=1)
+class SramSizeSpliter:
     """Split common convolution by sram size"""
 
     def __init__(self, config):
-        super(SramSizeSpliter, self).__init__()
         self.config = config
-        self.sram_size = config.h_sram_size
-        self.contain_weight = config.h_contain_weight
-        self.input_byte = config.nbit_input // 8
-        self.activation_byte = config.nbit_input // 8
-        self.weight_byte = config.nbit_weight // 8
-        self.align = config.h_align
-        self.target = config.target
+        self.sram_size = config["h_sram_size"]
+        self.contain_weight = config["h_contain_weight"]
+        self.input_byte = config["nbit_input"] // 8
+        self.activation_byte = config["nbit_input"] // 8
+        self.weight_byte = config["nbit_weight"] // 8
+        self.align = config["h_align"]
+        self.target = config["target"]
 
-    def visit_call(self, call):
-        op_args = [self.visit(arg) for arg in call.args]
-        if call.op.name == "qnn.csi.conv2d":
-            in_data = op_args[0]
-            conv_attrs = _qnn_attrs(call.attrs)
-            in_shape = infer_shape(in_data)
-            w_shape = op_args[1].data.asnumpy().shape
-            padding = conv_attrs["padding"]
-            dilation = conv_attrs["dilation"]
-            strides = conv_attrs["strides"]
-            o_shape = _infer_shape(in_shape, w_shape, padding, dilation, strides)
+    def transform_function(self, func, mod, ctx):
+        """
+        split by sram size.
+        """
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        sram_size_spliter = self
 
-            in_size = np.prod(in_shape) * self.activation_byte
-            out_size = np.prod(o_shape) * self.activation_byte
+        class SramSizeSpliterMutator(relay.ExprMutator):
+            """_summary_
 
-            total_size = in_size + out_size
-            if self.contain_weight:
-                w_size = np.prod(w_shape) * self.weight_byte
-                total_size += w_size
+            Args:
+                relay (_type_): _description_
+            """
 
-            # needn't split
-            if total_size <= self.sram_size and self.align == 1:
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                if call.op.name == "qnn.csi.conv2d":
+                    in_data = op_args[0]
+                    conv_attrs = _qnn_attrs(call.attrs)
+                    in_shape = infer_shape(in_data)
+                    w_shape = op_args[1].data.asnumpy().shape
+                    padding = conv_attrs["padding"]
+                    dilation = conv_attrs["dilation"]
+                    strides = conv_attrs["strides"]
+                    o_shape = _infer_shape(in_shape, w_shape, padding, dilation, strides)
+
+                    in_size = np.prod(in_shape) * sram_size_spliter.activation_byte
+                    out_size = np.prod(o_shape) * sram_size_spliter.activation_byte
+
+                    total_size = in_size + out_size
+                    if sram_size_spliter.contain_weight:
+                        w_size = np.prod(w_shape) * sram_size_spliter.weight_byte
+                        total_size += w_size
+
+                    # needn't split
+                    if total_size <= sram_size_spliter.sram_size and sram_size_spliter.align == 1:
+                        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+
+                    weight = op_args[1].data.asnumpy()
+                    bias = op_args[2].data.asnumpy()
+                    is_depthwise = is_depthwise_conv2d(
+                        in_shape, "NCHW", w_shape, "OIHW", conv_attrs["groups"]
+                    )
+
+                    s_out_size = np.prod(o_shape[2:]) * sram_size_spliter.activation_byte
+                    s_w_size = 0
+                    if sram_size_spliter.contain_weight:
+                        s_w_size = np.prod(w_shape[2:]) * sram_size_spliter.weight_byte
+                    # for depthwise
+                    if is_depthwise:
+                        # NCHW
+                        s_in_size = np.prod(in_shape[2:]) * sram_size_spliter.input_byte
+                        max_groups = np.floor_divide(
+                            sram_size_spliter.sram_size, (s_in_size + s_out_size + s_w_size)
+                        ).astype(int)
+
+                        if sram_size_spliter.align > 1:
+                            cof = int(max_groups / sram_size_spliter.align)
+                            if cof == 0:
+                                raise Exception(
+                                    f"Sram size is too small to align {sram_size_spliter.align}."
+                                )
+                            max_groups = cof * sram_size_spliter.align
+                            cof = int(w_shape[0] / sram_size_spliter.align)
+                            max_groups = cof * sram_size_spliter.align if cof > 0 else max_groups
+
+                        if max_groups > 0:
+                            logger.debug("split depthwise conv by max groups:%s", max_groups)
+                            logger.debug(
+                                "original dw conv shaps: in_shape=%s, w_shape=%s", in_shape, w_shape
+                            )
+                            new_call = split_group(in_data, weight, bias, conv_attrs, max_groups)
+                            new_call.__checked_type__ = call.checked_type
+                            return new_call
+
+                        new_call = split_depthwise_conv2d_input(
+                            in_data,
+                            weight,
+                            bias,
+                            conv_attrs,
+                            sram_size_spliter.sram_size,
+                            sram_size_spliter.contain_weight,
+                            sram_size_spliter.input_byte,
+                            sram_size_spliter.activation_byte,
+                            sram_size_spliter.weight_byte,
+                        )
+                        new_call.__checked_type__ = call.checked_type
+                        return new_call
+
+                    # for group convolution
+                    if conv_attrs["groups"] > 1:
+                        # group conv can split as common single conv.
+                        # it can be use directly if sram size larger than single group size.
+                        s_group_size = total_size // conv_attrs["groups"]
+                        if s_group_size <= sram_size_spliter.sram_size:
+                            max_groups = np.floor_divide(
+                                sram_size_spliter.sram_size, s_group_size
+                            ).astype(int)
+                            if sram_size_spliter.align > 1:
+                                cof = int(max_groups / sram_size_spliter.align)
+                                if cof == 0:
+                                    raise Exception(
+                                        f"Sram size is too small to align \
+                                        {sram_size_spliter.align}."
+                                    )
+                                max_groups = cof * sram_size_spliter.align
+                            logger.debug("split group conv by max groups:%s", max_groups)
+                            logger.debug(
+                                "original group conv shaps: in_shape=%s, w_shape=%s",
+                                in_shape,
+                                w_shape,
+                            )
+                            new_call = split_group(in_data, weight, bias, conv_attrs, max_groups)
+                            new_call.__checked_type__ = call.checked_type
+                            return new_call
+
+                        new_call = split_group_conv2d_input(
+                            in_data,
+                            weight,
+                            bias,
+                            conv_attrs,
+                            sram_size_spliter.sram_size,
+                            sram_size_spliter.contain_weight,
+                            sram_size_spliter.input_byte,
+                            sram_size_spliter.activation_byte,
+                            sram_size_spliter.weight_byte,
+                        )
+                        new_call.__checked_type__ = call.checked_type
+                        return new_call
+
+                    # s_out_size = np.prod(o_shape[1:]) * self.activation_byte
+                    # s_w_size = 0
+                    # if self.contain_weight:
+                    #     s_w_size = np.prod(w_shape[1:]) * self.weight_byte
+                    # # for common convolution
+                    # max_out_channel = np.floor_divide(
+                    #     self.sram_size - in_size, (s_out_size + s_w_size)
+                    # ).astype(int)
+                    # if max_out_channel > 0:
+                    #     logger.debug("split common conv by out channel:%s",
+                    #       max_out_channel)
+                    #     logger.debug(
+                    #         "original common conv shaps: in_shape=%s,
+                    #       w_shape=%s", in_shape, w_shape
+                    #     )
+                    #     return split_channel(in_data, weight, bias, conv_attrs, max_out_channel)
+
+                    return split_common_conv2d_input(
+                        in_data,
+                        weight,
+                        bias,
+                        conv_attrs,
+                        sram_size_spliter.sram_size,
+                        sram_size_spliter.contain_weight,
+                        sram_size_spliter.input_byte,
+                        sram_size_spliter.activation_byte,
+                        sram_size_spliter.weight_byte,
+                        sram_size_spliter.align,
+                    )
+
+                if call.op.name == "qnn.csi.relu":
+                    if isinstance(op_args[0], Call) and op_args[0].op.name == "qnn.csi.concatenate":
+                        return split_relu(call, op_args, sram_size_spliter.target)
+
                 return Call(call.op, op_args, call.attrs, call.type_args, call.span)
 
-            weight = op_args[1].data.asnumpy()
-            bias = op_args[2].data.asnumpy()
-            is_depthwise = is_depthwise_conv2d(
-                in_shape, "NCHW", w_shape, "OIHW", conv_attrs["groups"]
-            )
+            def visit_function(self, fn):
+                new_params = [self.visit(x) for x in fn.params]
+                new_body = self.visit(fn.body)
+                return function.Function(list(new_params), new_body)
 
-            s_out_size = np.prod(o_shape[2:]) * self.activation_byte
-            s_w_size = 0
-            if self.contain_weight:
-                s_w_size = np.prod(w_shape[2:]) * self.weight_byte
-            # for depthwise
-            if is_depthwise:
-                # NCHW
-                s_in_size = np.prod(in_shape[2:]) * self.input_byte
-                max_groups = np.floor_divide(
-                    self.sram_size, (s_in_size + s_out_size + s_w_size)
-                ).astype(int)
-
-                if self.align > 1:
-                    cof = int(max_groups / self.align)
-                    if cof == 0:
-                        raise Exception(f"Sram size is too small to align {self.align}.")
-                    max_groups = cof * self.align
-                    cof = int(w_shape[0] / self.align)
-                    max_groups = cof * self.align if cof > 0 else max_groups
-
-                if max_groups > 0:
-                    logger.debug("split depthwise conv by max groups:%s", max_groups)
-                    logger.debug(
-                        "original dw conv shaps: in_shape=%s, w_shape=%s", in_shape, w_shape
-                    )
-                    new_call = split_group(in_data, weight, bias, conv_attrs, max_groups)
-                    new_call.__checked_type__ = call.checked_type
-                    return new_call
-
-                new_call = split_depthwise_conv2d_input(
-                    in_data,
-                    weight,
-                    bias,
-                    conv_attrs,
-                    self.sram_size,
-                    self.contain_weight,
-                    self.input_byte,
-                    self.activation_byte,
-                    self.weight_byte,
-                )
-                new_call.__checked_type__ = call.checked_type
-                return new_call
-
-            # for group convolution
-            if conv_attrs["groups"] > 1:
-                # group conv can split as common single conv.
-                # it can be use directly if sram size larger than single group size.
-                s_group_size = total_size // conv_attrs["groups"]
-                if s_group_size <= self.sram_size:
-                    max_groups = np.floor_divide(self.sram_size, s_group_size).astype(int)
-                    if self.align > 1:
-                        cof = int(max_groups / self.align)
-                        if cof == 0:
-                            raise Exception(f"Sram size is too small to align {self.align}.")
-                        max_groups = cof * self.align
-                    logger.debug("split group conv by max groups:%s", max_groups)
-                    logger.debug(
-                        "original group conv shaps: in_shape=%s, w_shape=%s", in_shape, w_shape
-                    )
-                    new_call = split_group(in_data, weight, bias, conv_attrs, max_groups)
-                    new_call.__checked_type__ = call.checked_type
-                    return new_call
-
-                new_call = split_group_conv2d_input(
-                    in_data,
-                    weight,
-                    bias,
-                    conv_attrs,
-                    self.sram_size,
-                    self.contain_weight,
-                    self.input_byte,
-                    self.activation_byte,
-                    self.weight_byte,
-                )
-                new_call.__checked_type__ = call.checked_type
-                return new_call
-
-            # s_out_size = np.prod(o_shape[1:]) * self.activation_byte
-            # s_w_size = 0
-            # if self.contain_weight:
-            #     s_w_size = np.prod(w_shape[1:]) * self.weight_byte
-            # # for common convolution
-            # max_out_channel = np.floor_divide(
-            #     self.sram_size - in_size, (s_out_size + s_w_size)
-            # ).astype(int)
-            # if max_out_channel > 0:
-            #     logger.debug("split common conv by out channel:%s", max_out_channel)
-            #     logger.debug(
-            #         "original common conv shaps: in_shape=%s, w_shape=%s", in_shape, w_shape
-            #     )
-            #     return split_channel(in_data, weight, bias, conv_attrs, max_out_channel)
-
-            return split_common_conv2d_input(
-                in_data,
-                weight,
-                bias,
-                conv_attrs,
-                self.sram_size,
-                self.contain_weight,
-                self.input_byte,
-                self.activation_byte,
-                self.weight_byte,
-                self.align,
-            )
-
-        if call.op.name == "qnn.csi.relu":
-            if isinstance(op_args[0], Call) and op_args[0].op.name == "qnn.csi.concatenate":
-                return split_relu(call, op_args, self.target)
-
-        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-
-    def visit_function(self, fn):
-        new_params = [self.visit(x) for x in fn.params]
-        new_body = self.visit(fn.body)
-        return function.Function(list(new_params), new_body)
+        return SramSizeSpliterMutator().visit(func)
 
 
 @function_pass(opt_level=1)
@@ -999,28 +1094,31 @@ class ConvSpliter:
     """
 
     def __init__(self, crt_config):
-        self.max_groups = crt_config.h_max_groups
-        self.max_out_channel = crt_config.h_max_out_channel
-        self.max_kernel_size = crt_config.h_max_kernel_size
-        self.sram_size = crt_config.h_sram_size
         self.config = crt_config
-        self.target = crt_config.target
+        self.max_groups = crt_config["h_max_groups"]
+        self.max_out_channel = crt_config["h_max_out_channel"]
+        self.max_kernel_size = crt_config["h_max_kernel_size"]
+        self.sram_size = crt_config["h_sram_size"]
+        self.nbit_weight = crt_config["nbit_weight"]
+        self.target = crt_config["target"]
 
     def transform_function(self, func, mod, ctx):
         """patten and split op"""
         if self.max_groups:
             logger.debug("split by max groups: max_groups = %s", self.max_groups)
-            mod["main"] = MaxGroupSpliter(self.max_groups, self.target).visit(mod["main"])
+            mod = transform.Sequential([MaxGroupSpliter(self.max_groups, self.target)])(mod)
             mod = _transform.InferType()(mod)
         if self.max_out_channel:
             logger.debug("split by out groups: max_out_channel = %s", self.max_out_channel)
-            mod["main"] = OutChannelSpliter(self.max_out_channel, self.target).visit(mod["main"])
+            mod = transform.Sequential([OutChannelSpliter(self.max_out_channel, self.target)])(mod)
             mod = _transform.InferType()(mod)
         if self.max_kernel_size:
             logger.debug("split by kernel size: max_kernel_size = %s", self.max_kernel_size)
-            mod["main"] = KernelSizeSpliter(self.config, self.max_kernel_size).visit(mod["main"])
+            mod = transform.Sequential(
+                [KernelSizeSpliter(self.nbit_weight, self.target, self.max_kernel_size)]
+            )(mod)
             mod = _transform.InferType()(mod)
         if self.sram_size:
             logger.debug("split by sram size: max_sram_size = %s", self.sram_size)
-            mod["main"] = SramSizeSpliter(self.config).visit(mod["main"])
+            mod = transform.Sequential([SramSizeSpliter(self.config)])(mod)
         return mod["main"]

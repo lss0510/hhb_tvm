@@ -58,6 +58,16 @@ def wrap_topi_schedule(topi_schedule):
     return wrapper
 
 
+def wrap_topi_schedule_with_attrs(topi_schedule):
+    """Wrap TOPI schedule which uses attrs"""
+
+    def wrapper(attrs, outs, target):
+        with target:
+            return topi_schedule(outs, attrs)
+
+    return wrapper
+
+
 def wrap_topi_compute(topi_compute):
     """Wrap TOPI compute which doesn't use attrs"""
 
@@ -161,6 +171,29 @@ def wrap_compute_softmax(topi_compute):
     return _compute_softmax
 
 
+# reshape
+def wrap_compute_reshape(topi_compute):
+    """Wrap reshape topi compute"""
+
+    def _compute_reshape(attrs, inputs, out_type):
+        newshape = out_type.shape
+        return [topi_compute(inputs[0], newshape)]
+
+    return _compute_reshape
+
+
+# layout_transform
+def wrap_compute_layout_transform(topi_compute):
+    """Wrap layout_transform topi compute"""
+
+    def _compute_layout_transform(attrs, inputs, out_type):
+        src_layout = attrs.src_layout
+        dst_layout = attrs.dst_layout
+        return [topi_compute(inputs[0], src_layout, dst_layout)]
+
+    return _compute_layout_transform
+
+
 @override_native_generic_func("softmax_strategy")
 def softmax_strategy(attrs, inputs, out_type, target):
     """softmax generic strategy"""
@@ -169,6 +202,30 @@ def softmax_strategy(attrs, inputs, out_type, target):
         wrap_compute_softmax(topi.nn.softmax),
         wrap_topi_schedule(topi.generic.schedule_softmax),
         name="softmax.generic",
+    )
+    return strategy
+
+
+@override_native_generic_func("reshape_strategy")
+def reshape_strategy(attrs, inputs, out_type, target):
+    """reshape generic strategy"""
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_compute_reshape(topi.reshape),
+        wrap_topi_schedule(topi.generic.schedule_reshape),
+        name="reshape.generic",
+    )
+    return strategy
+
+
+@override_native_generic_func("layout_transform")
+def layout_transform_strategy(attrs, inputs, out_type, target):
+    """layout_transform generic strategy"""
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_compute_layout_transform(topi.layout_transform),
+        wrap_topi_schedule(topi.generic.schedule_layout_transform),
+        name="layout_transform.generic",
     )
     return strategy
 
@@ -221,6 +278,7 @@ get_meta_schedule_original_shape = _ffi.get_global_func(
     "relay.attrs.get_meta_schedule_original_shape"
 )
 
+
 # conv2d
 def wrap_compute_conv2d(
     topi_compute,
@@ -256,6 +314,17 @@ def wrap_compute_conv2d(
         return [topi_compute(*args)]
 
     return _compute_conv2d
+
+
+@override_native_generic_func("add_strategy")
+def add_strategy(attrs, inputs, out_type, target):
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_topi_compute(topi.add),
+        wrap_topi_schedule(topi.generic.schedule_add),
+        name="add.generic",
+    )
+    return strategy
 
 
 @override_native_generic_func("conv2d_strategy")

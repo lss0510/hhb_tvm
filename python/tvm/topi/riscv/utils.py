@@ -208,6 +208,404 @@ def load_vec(vec, l, ib, dtype, name="vec"):
     return ib.let(name, out)
 
 
+def get_vlse_intrin(dtype, m):
+    rv_dtype = rv_intrin_dtype(dtype)
+
+    return f"vlse{dtype[-2:]}_v_{rv_dtype}m{m}"
+
+
+def load_vec_strided(vec, stride, l, ib, dtype, name="vec"):
+    """match strided load"""
+    vl = get_simd_32bit_lanes()
+    m = vl // 4
+    vlse_intrin = get_vlse_intrin(dtype, m)
+    if dtype == "float16":
+        size = 2
+    elif dtype == "float32":
+        size = 4
+    else:
+        raise ValueError("dtype should be float16 or float32")
+    out = tvm.tir.call_extern(
+        f"custom[v{dtype}m{m}_t]{vl * 32}", vlse_intrin, vec, stride * size, l
+    )
+
+    return ib.let(name, out)
+
+
+def intrin_sum(simd_width, length, dtype, num=1, stride=1):
+    """match math sum(a[i])"""
+    j = te.reduce_axis((0, length), name="j")
+    if num == 1:
+        a = te.placeholder((1, length), name="a", dtype=dtype)
+        c = te.compute((1,), lambda i: te.sum(a[i, j], j), name="sum")
+    elif num == 2:
+        a = te.placeholder((length, 1), name="a", dtype=dtype)
+        c = te.compute((1, 1), lambda i: te.sum(a[j, i], j), name="sum")
+    elif num == 3:
+        a = te.placeholder((length, 1, 1), name="a", dtype=dtype)
+        c = te.compute((1, 1, 1), lambda i, k: te.sum(a[j, i, k], j), name="sum")
+    elif num == 4:
+        a = te.placeholder((length, 1, 1, 1), name="a", dtype=dtype)
+        c = te.compute((1, 1, 1, 1), lambda i, k, r: te.sum(a[j, i, k, r], j), name="sum")
+    elif num == 5:
+        a = te.placeholder((length, 1, 1, 1, 1), name="a", dtype=dtype)
+        c = te.compute((1, 1, 1, 1, 1), lambda i, k, r, s: te.sum(a[j, i, k, r, s], j), name="sum")
+    else:
+        raise Exception(f"Maximum number of supported axes is 5")
+    Ab = tvm.tir.decl_buffer(length, a.dtype, offset_factor=1, name="A", strides=[te.var("s1")])
+    Cb = tvm.tir.decl_buffer(1, c.dtype, offset_factor=1, name="C", strides=[te.var("s2")])
+
+    vl = get_simd_32bit_lanes()
+    m = vl // 4
+
+    rv_dtype = rv_intrin_dtype(dtype)
+
+    def intrin_func(ins, outs):
+        aa = ins[0]
+        cc = outs[0]
+        ib = tvm.tir.ir_builder.create()
+        vec_a = aa.access_ptr("r")
+        vec_c = cc.access_ptr("w")
+        vec_b = aa.access_ptr("r")
+        vec_d = aa.vload([0], dtype)
+        loop = te.div(length, simd_width)
+        mod = length % simd_width
+        if loop > 1:
+            if stride == 1:
+                vec_b = load_vec(vec_b, simd_width, ib, dtype, "vb")
+            else:
+                vec_b = load_vec_strided(vec_b, stride, simd_width, ib, dtype, "vb")
+            for i in range(1, int(loop)):
+                vec_a = aa.access_ptr("r", offset=simd_width * i * stride)
+                if stride == 1:
+                    vec_a = load_vec(vec_a, simd_width, ib, dtype, "va")
+                else:
+                    vec_a = load_vec_strided(vec_a, stride, simd_width, ib, dtype, "va")
+                vadd = tvm.tir.call_extern(
+                    f"custom[v{dtype}m{m}_t]{vl * 32}",
+                    f"vfadd_vv_{rv_dtype}m{m}",
+                    vec_a,
+                    vec_b,
+                    simd_width,
+                )
+                out = ib.let("vadd_vv", vadd)
+                vec_b = out
+                ib.emit(tvm.tir.call_extern(dtype, f"vfmv_v_f_{rv_dtype}m{m}", 0.0, 4, vec_d))
+                vsum = tvm.tir.call_extern(
+                    f"custom[v{dtype}m{m}_t]{vl * 32}",
+                    f"vfredusum_vs_{rv_dtype}m{m}_{rv_dtype}m1",
+                    vec_b,
+                    vec_b,
+                    vec_d,
+                    simd_width,
+                )
+                out = ib.let("vfredusum_vs", vsum)
+                if mod > 0 and i == int(loop) - 1:
+                    vec_a = aa.access_ptr("r", offset=simd_width * (i + 1) * stride)
+
+                    if stride == 1:
+                        vec_a = load_vec(vec_a, mod, ib, dtype, "va")
+                    else:
+                        vec_a = load_vec_strided(vec_a, stride, mod, ib, dtype, "va")
+
+                    vsum = tvm.tir.call_extern(
+                        f"custom[v{dtype}m{m}_t]{vl * 32}",
+                        f"vfredusum_vs_{rv_dtype}m{m}_{rv_dtype}m1",
+                        vec_a,
+                        vec_a,
+                        out,
+                        mod,
+                    )
+                    out = ib.let("vfredusum_vs", vsum)
+        elif loop == 1:
+            vec_a = aa.access_ptr("r", offset=simd_width * stride)
+            if stride == 1:
+                vec_b = load_vec(vec_b, simd_width, ib, dtype, "vb")
+                vec_a = load_vec(vec_a, mod, ib, dtype, "va")
+            else:
+                vec_b = load_vec_strided(vec_b, stride, simd_width, ib, dtype, "vb")
+                vec_a = load_vec_strided(vec_a, stride, mod, ib, dtype, "va")
+            ib.emit(tvm.tir.call_extern(dtype, f"vfmv_v_f_{rv_dtype}m{m}", 0.0, 4, vec_d))
+            vsum = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}",
+                f"vfredusum_vs_{rv_dtype}m{m}_{rv_dtype}m1",
+                vec_b,
+                vec_b,
+                vec_d,
+                simd_width,
+            )
+            out = ib.let("vfredusum_vs", vsum)
+            if mod > 0:
+                vsum = tvm.tir.call_extern(
+                    f"custom[v{dtype}m{m}_t]{vl * 32}",
+                    f"vfredusum_vs_{rv_dtype}m{m}_{rv_dtype}m1",
+                    vec_a,
+                    vec_a,
+                    out,
+                    mod,
+                )
+                out = ib.let("vfredusum_vs", vsum)
+        else:
+            vec_a = aa.access_ptr("r")
+            if stride == 1:
+                vec_a = load_vec(vec_a, mod, ib, dtype, "va")
+            else:
+                vec_a = load_vec_strided(vec_a, stride, mod, ib, dtype, "va")
+            ib.emit(tvm.tir.call_extern(dtype, f"vfmv_v_f_{rv_dtype}m{m}", 0.0, 4, vec_d))
+            vsum = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}",
+                f"vfredusum_vs_{rv_dtype}m{m}_{rv_dtype}m1",
+                vec_a,
+                vec_a,
+                vec_d,
+                mod,
+            )
+            out = ib.let("vfredusum_vs", vsum)
+        vse_intrin = get_vse_intrin(dtype, m)
+        ib.emit(tvm.tir.call_extern(dtype, vse_intrin, vec_c, out, 1))
+
+        return ib.get()
+
+    return te.decl_tensor_intrin(c.op, intrin_func, binds={a: Ab, c: Cb})
+
+
+def intrin_max(simd_width, length, dtype, num=1, stride=1):
+    """match math max(a[i])"""
+    j = te.reduce_axis((0, length), name="j")
+    if num == 1:
+        a = te.placeholder((1, length), name="a", dtype=dtype)
+        c = te.compute((1,), lambda i: te.max(a[i, j], j), name="sum")
+    elif num == 2:
+        a = te.placeholder((length, 1), name="a", dtype=dtype)
+        c = te.compute((1, 1), lambda i: te.max(a[j, i], j), name="sum")
+    elif num == 3:
+        a = te.placeholder((length, 1, 1), name="a", dtype=dtype)
+        c = te.compute((1, 1, 1), lambda i, k: te.max(a[j, i, k], j), name="sum")
+    elif num == 4:
+        a = te.placeholder((length, 1, 1, 1), name="a", dtype=dtype)
+        c = te.compute((1, 1, 1, 1), lambda i, k, r: te.max(a[j, i, k, r], j), name="sum")
+    elif num == 5:
+        a = te.placeholder((length, 1, 1, 1, 1), name="a", dtype=dtype)
+        c = te.compute((1, 1, 1, 1, 1), lambda i, k, r, s: te.max(a[j, i, k, r, s], j), name="sum")
+    else:
+        raise Exception(f"Maximum number of supported axes is 5")
+    Ab = tvm.tir.decl_buffer(length, a.dtype, offset_factor=1, name="A", strides=[te.var("s1")])
+    Cb = tvm.tir.decl_buffer(1, c.dtype, offset_factor=1, name="C", strides=[te.var("s2")])
+
+    vl = get_simd_32bit_lanes()
+    m = vl // 4
+
+    rv_dtype = rv_intrin_dtype(dtype)
+
+    if dtype == "float16":
+        fmin = -65504
+    else:
+        fmin = -3.40282346638528859811704183484516925e38
+
+    def intrin_func(ins, outs):
+        aa = ins[0]
+        cc = outs[0]
+        ib = tvm.tir.ir_builder.create()
+        vec_a = aa.access_ptr("r")
+        vec_c = cc.access_ptr("w")
+        vec_b = aa.access_ptr("r")
+        vec_d = aa.vload([0], dtype)
+        loop = te.div(length, simd_width)
+        mod = length % simd_width
+        if loop > 1:
+            if stride == 1:
+                vec_b = load_vec(vec_b, simd_width, ib, dtype, "vb")
+            else:
+                vec_b = load_vec_strided(vec_b, stride, simd_width, ib, dtype, "vb")
+            for i in range(1, int(loop)):
+                vec_a = aa.access_ptr("r", offset=simd_width * i * stride)
+                if stride == 1:
+                    vec_a = load_vec(vec_a, simd_width, ib, dtype, "va")
+                else:
+                    vec_a = load_vec_strided(vec_a, stride, simd_width, ib, dtype, "va")
+                vadd = tvm.tir.call_extern(
+                    f"custom[v{dtype}m{m}_t]{vl * 32}",
+                    f"vfadd_vv_{rv_dtype}m{m}",
+                    vec_a,
+                    vec_b,
+                    simd_width,
+                )
+                out = ib.let("vadd_vv", vadd)
+                vec_b = out
+                ib.emit(tvm.tir.call_extern(dtype, f"vfmv_v_f_{rv_dtype}m{m}", fmin, 4, vec_d))
+                vsum = tvm.tir.call_extern(
+                    f"custom[v{dtype}m{m}_t]{vl * 32}",
+                    f"vfredmax_vs_{rv_dtype}m{m}_{rv_dtype}m1",
+                    vec_b,
+                    vec_b,
+                    vec_d,
+                    simd_width,
+                )
+                out = ib.let("vfredmax_vs", vsum)
+                if mod > 0 and i == int(loop) - 1:
+                    vec_a = aa.access_ptr("r", offset=simd_width * (i + 1) * stride)
+
+                    if stride == 1:
+                        vec_a = load_vec(vec_a, mod, ib, dtype, "va")
+                    else:
+                        vec_a = load_vec_strided(vec_a, stride, mod, ib, dtype, "va")
+
+                    vsum = tvm.tir.call_extern(
+                        f"custom[v{dtype}m{m}_t]{vl * 32}",
+                        f"vfredmax_vs_{rv_dtype}m{m}_{rv_dtype}m1",
+                        vec_a,
+                        vec_a,
+                        out,
+                        mod,
+                    )
+                    out = ib.let("vfredmax_vs", vsum)
+        elif loop == 1:
+            vec_a = aa.access_ptr("r", offset=simd_width * stride)
+            if stride == 1:
+                vec_b = load_vec(vec_b, simd_width, ib, dtype, "vb")
+                vec_a = load_vec(vec_a, mod, ib, dtype, "va")
+            else:
+                vec_b = load_vec_strided(vec_b, stride, simd_width, ib, dtype, "vb")
+                vec_a = load_vec_strided(vec_a, stride, mod, ib, dtype, "va")
+            ib.emit(tvm.tir.call_extern(dtype, f"vfmv_v_f_{rv_dtype}m{m}", fmin, 4, vec_d))
+            vsum = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}",
+                f"vfredmax_vs_{rv_dtype}m{m}_{rv_dtype}m1",
+                vec_b,
+                vec_b,
+                vec_d,
+                simd_width,
+            )
+            out = ib.let("vfredmax_vs", vsum)
+            vsum = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}",
+                f"vfredmax_vs_{rv_dtype}m{m}_{rv_dtype}m1",
+                vec_a,
+                vec_a,
+                out,
+                mod,
+            )
+            out = ib.let("vfredmax_vs", vsum)
+        else:
+            vec_a = aa.access_ptr("r")
+            if stride == 1:
+                vec_a = load_vec(vec_a, mod, ib, dtype, "va")
+            else:
+                vec_a = load_vec_strided(vec_a, stride, mod, ib, dtype, "va")
+            ib.emit(tvm.tir.call_extern(dtype, f"vfmv_v_f_{rv_dtype}m{m}", fmin, 4, vec_d))
+            vsum = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}",
+                f"vfredmax_vs_{rv_dtype}m{m}_{rv_dtype}m1",
+                vec_a,
+                vec_a,
+                vec_d,
+                mod,
+            )
+            out = ib.let("vfredmax_vs", vsum)
+        vse_intrin = get_vse_intrin(dtype, m)
+        ib.emit(tvm.tir.call_extern(dtype, vse_intrin, vec_c, out, 1))
+
+        return ib.get()
+
+    return te.decl_tensor_intrin(c.op, intrin_func, binds={a: Ab, c: Cb})
+
+
+def intrin_sub(l, dtype, flag):
+    """match math a[i] - b[0] or a[i] - b[i]"""
+    a = te.placeholder((l,), name="a", dtype=dtype)
+    b = te.placeholder((l,), name="b", dtype=dtype)
+    if flag:
+        c = te.compute(a.shape, lambda i: a[i] - b[0], name="sub")
+    else:
+        c = te.compute(a.shape, lambda i: a[i] - b[i], name="sub")
+    Ab = tvm.tir.decl_buffer(a.shape, a.dtype, name="A", offset_factor=1, strides=[1])
+    Bb = tvm.tir.decl_buffer(b.shape, a.dtype, name="B", offset_factor=1, strides=[1])
+    Cb = tvm.tir.decl_buffer(c.shape, c.dtype, name="C", offset_factor=1, strides=[1])
+
+    vl = get_simd_32bit_lanes()
+    m = vl // 4
+
+    rv_dtype = rv_intrin_dtype(dtype)
+
+    def intrin_func(ins, outs):
+        aa, bb = ins
+        cc = outs[0]
+
+        ib = tvm.tir.ir_builder.create()
+
+        vec_c = cc.access_ptr("w")
+
+        vec_a = aa.access_ptr("r")
+        vec_a = load_vec(vec_a, l, ib, dtype, "va")
+        if flag:
+            vec_b = bb.vload([0], dtype)
+            vsub = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}", f"vfsub_vf_{rv_dtype}m{m}", vec_a, vec_b, l
+            )
+            out = ib.let("sub_vf", vsub)
+        else:
+            vec_b = bb.access_ptr("r")
+            vec_b = load_vec(vec_b, l, ib, dtype, "va")
+            vsub = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}", f"vfsub_vv_{rv_dtype}m{m}", vec_a, vec_b, l
+            )
+            out = ib.let("sub_vv", vsub)
+        vse_intrin = get_vse_intrin(dtype, m)
+        ib.emit(tvm.tir.call_extern(dtype, vse_intrin, vec_c, out, l))
+
+        return ib.get()
+
+    return te.decl_tensor_intrin(c.op, intrin_func, binds={a: Ab, b: Bb, c: Cb})
+
+
+def intrin_div(l, dtype, flag):
+    """match math a[i] / b[0] or a[i] / b[i]"""
+    a = te.placeholder((l,), name="a", dtype=dtype)
+    b = te.placeholder((l,), name="b", dtype=dtype)
+    if flag:
+        c = te.compute(a.shape, lambda i: a[i] / b[0], name="div")
+    else:
+        c = te.compute(a.shape, lambda i: a[i] / b[i], name="div")
+    Ab = tvm.tir.decl_buffer(a.shape, a.dtype, name="A", offset_factor=1, strides=[1])
+    Bb = tvm.tir.decl_buffer(b.shape, a.dtype, name="B", offset_factor=1, strides=[1])
+    Cb = tvm.tir.decl_buffer(c.shape, c.dtype, name="C", offset_factor=1, strides=[1])
+
+    vl = get_simd_32bit_lanes()
+    m = vl // 4
+
+    rv_dtype = rv_intrin_dtype(dtype)
+
+    def intrin_func(ins, outs):
+        aa, bb = ins
+        cc = outs[0]
+
+        ib = tvm.tir.ir_builder.create()
+
+        vec_c = cc.access_ptr("w")
+
+        vec_a = aa.access_ptr("r")
+        vec_a = load_vec(vec_a, l, ib, dtype, "va")
+        if flag:
+            vec_b = bb.vload([0], dtype)
+            vdiv = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}", f"vfdiv_vf_{rv_dtype}m{m}", vec_a, vec_b, l
+            )
+            out = ib.let("div_vf", vdiv)
+        else:
+            vec_b = bb.access_ptr("r")
+            vec_b = load_vec(vec_b, l, ib, dtype, "va")
+            vdiv = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}", f"vfdiv_vv_{rv_dtype}m{m}", vec_a, vec_b, l
+            )
+            out = ib.let("div_vv", vdiv)
+        vse_intrin = get_vse_intrin(dtype, m)
+        ib.emit(tvm.tir.call_extern(dtype, vse_intrin, vec_c, out, l))
+
+        return ib.get()
+
+    return te.decl_tensor_intrin(c.op, intrin_func, binds={a: Ab, b: Bb, c: Cb})
+
+
 def intrin_macc_vf(l, dtype, set_to_out=False):
     """match math sum(a[k] * b[0], axis=k)"""
     a = te.placeholder((l,), name="a", dtype=dtype)
@@ -431,6 +829,73 @@ def intrin_add_vv(l, dtype, load_a=True, load_b=True, act_mod=None):
     return te.decl_tensor_intrin(c.op, intrin_func, binds={a: Ab, b: Bb, c: Cb})
 
 
+def intrin_add_vv_broadcast(l, dtype, broadcast_flag):
+    """match math a[i] + b[i]"""
+    a = te.placeholder((l,), name="a", dtype=dtype)
+    b = te.placeholder((l,), name="b", dtype=dtype)
+    if broadcast_flag == 1:
+        c = te.compute(a.shape, lambda i: a[i] + b[0], name="add")
+    elif broadcast_flag == 2:
+        c = te.compute(a.shape, lambda i: a[0] + b[i], name="add")
+    else:
+        c = te.compute(a.shape, lambda i: a[i] + b[i], name="add")
+    Ab = tvm.tir.decl_buffer(a.shape, a.dtype, name="A", offset_factor=1, strides=[1])
+    Bb = tvm.tir.decl_buffer(b.shape, a.dtype, name="B", offset_factor=1, strides=[1])
+    Cb = tvm.tir.decl_buffer(c.shape, c.dtype, name="C", offset_factor=1, strides=[1])
+
+    vl = get_simd_32bit_lanes()
+    m = vl // 4
+
+    rv_dtype = rv_intrin_dtype(dtype)
+
+    def intrin_func(ins, outs):
+        aa, bb = ins
+        cc = outs[0]
+
+        ib = tvm.tir.ir_builder.create()
+
+        vec_c = cc.access_ptr("w")
+
+        if broadcast_flag == 1:
+            vec_a = aa.access_ptr("r")
+            vec_b = bb.vload([0], dtype)
+            vec_a = load_vec(vec_a, l, ib, dtype, "va")
+
+            vadd = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}", f"vfadd_vf_{rv_dtype}m{m}", vec_a, vec_b, l
+            )
+            out = ib.let("add_vf", vadd)
+            vse_intrin = get_vse_intrin(dtype, m)
+            ib.emit(tvm.tir.call_extern(dtype, vse_intrin, vec_c, out, l))
+        elif broadcast_flag == 2:
+            vec_a = aa.vload([0], dtype)
+            vec_b = bb.access_ptr("r")
+            vec_b = load_vec(vec_b, l, ib, dtype, "vb")
+
+            vadd = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}", f"vfadd_vf_{rv_dtype}m{m}", vec_b, vec_a, l
+            )
+            out = ib.let("add_vf", vadd)
+            vse_intrin = get_vse_intrin(dtype, m)
+            ib.emit(tvm.tir.call_extern(dtype, vse_intrin, vec_c, out, l))
+        else:
+            vec_a = aa.access_ptr("r")
+            vec_b = bb.access_ptr("r")
+            vec_a = load_vec(vec_a, l, ib, dtype, "va")
+            vec_b = load_vec(vec_b, l, ib, dtype, "vb")
+
+            vadd = tvm.tir.call_extern(
+                f"custom[v{dtype}m{m}_t]{vl * 32}", f"vfadd_vv_{rv_dtype}m{m}", vec_a, vec_b, l
+            )
+            out = ib.let("add_vv", vadd)
+            vse_intrin = get_vse_intrin(dtype, m)
+            ib.emit(tvm.tir.call_extern(dtype, vse_intrin, vec_c, out, l))
+
+        return ib.get()
+
+    return te.decl_tensor_intrin(c.op, intrin_func, binds={a: Ab, b: Bb, c: Cb})
+
+
 def intrin_load(l, dtype):
     """match math load a[i]"""
     a = te.placeholder((l,), name="a", dtype=dtype)
@@ -455,6 +920,95 @@ def intrin_load(l, dtype):
         return ib.get()
 
     return te.decl_tensor_intrin(c.op, intrin_func, binds={a: Ab, c: Cb})
+
+
+def intrin_reshape(input_shape, lo, l, dtype, flag):
+    """match reshape"""
+    a = te.placeholder((l,), name="a", dtype=dtype)
+    if flag == 1:
+        c = te.compute(
+            (l,),
+            lambda i: a[
+                tvm.tir.floormod(i + lo * l, input_shape[-1])
+                - (lo * l - tvm.tir.floordiv(lo, tvm.tir.div(input_shape[-1], l)) * input_shape[-1])
+            ],
+            name="load",
+        )
+    else:
+        c = te.compute((l,), lambda i: a[i], name="load")
+
+    Ab = tvm.tir.decl_buffer(a.shape, a.dtype, name="A", offset_factor=1, strides=[1])
+    Cb = tvm.tir.decl_buffer(c.shape, c.dtype, name="C", offset_factor=1, strides=[1])
+
+    vl = get_simd_32bit_lanes()
+    m = vl // 4
+
+    def intrin_func(ins, outs):
+        aa = ins[0]
+        cc = outs[0]
+        ib = tvm.tir.ir_builder.create()
+
+        # vec_a = aa.vload([0], dtype)
+        vec_a = aa.access_ptr("r")
+        vec_c = cc.access_ptr("w")
+
+        vec_a = load_vec(vec_a, l, ib, dtype, "va")
+        vse_intrin = get_vse_intrin(dtype, m)
+        ib.emit(tvm.tir.call_extern(dtype, vse_intrin, vec_c, vec_a, l))
+        return ib.get()
+
+    return te.decl_tensor_intrin(c.op, intrin_func, name="intrin_reshape", binds={a: Ab, c: Cb})
+
+
+def intrin_layout_transform(l, dtype, stride, num):
+    """match layout_transform and transpose"""
+    a = te.placeholder((l,) + (1,) * num, name="a", dtype=dtype)
+    # c = te.compute((l,), lambda i: a[i, *([0] * num)], name="load")
+    if num == 0:
+        c = te.compute((l,), lambda i: a[i], name="load")
+    elif num == 1:
+        c = te.compute((l,), lambda i: a[i, 0], name="load")
+    elif num == 2:
+        c = te.compute((l,), lambda i: a[i, 0, 0], name="load")
+    elif num == 3:
+        c = te.compute((l,), lambda i: a[i, 0, 0, 0], name="load")
+    elif num == 4:
+        c = te.compute((l,), lambda i: a[i, 0, 0, 0, 0], name="load")
+    else:
+        raise ValueError("Unsupported layout")
+    Ab = tvm.tir.decl_buffer(
+        a.shape,
+        a.dtype,
+        name="A",
+        offset_factor=1,
+        strides=[1]
+        + [
+            0,
+        ]
+        * num,
+    )
+    Cb = tvm.tir.decl_buffer(c.shape, c.dtype, name="C", offset_factor=1, strides=[1])
+
+    vl = get_simd_32bit_lanes()
+    m = vl // 4
+
+    def intrin_func(ins, outs):
+        aa = ins[0]
+        cc = outs[0]
+        ib = tvm.tir.ir_builder.create()
+
+        # vec_a = aa.vload([0], dtype)
+        vec_a = aa.access_ptr("r")
+        vec_c = cc.access_ptr("w")
+
+        vec_a = load_vec_strided(vec_a, stride, l, ib, dtype, "va")
+        vse_intrin = get_vse_intrin(dtype, m)
+        ib.emit(tvm.tir.call_extern(dtype, vse_intrin, vec_c, vec_a, l))
+        return ib.get()
+
+    return te.decl_tensor_intrin(
+        c.op, intrin_func, name="intrin_layout_transform", binds={a: Ab, c: Cb}
+    )
 
 
 def intrin_macc_fv(l, dtype):

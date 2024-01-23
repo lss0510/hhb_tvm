@@ -76,7 +76,7 @@ def aitrace_options(indicator, path):
         The result target
     """
     if not isinstance(indicator, list):
-        raise HHBException("indicator should be list instead of {}".format(type(indicator)))
+        raise HHBException("indicator should be list instead of {}\n".format(type(indicator)))
     target_str = "aitrace"
     target_str += " -type=" + ",".join(indicator)
 
@@ -157,93 +157,6 @@ def print_mem_total_info(info):
     )
 
 
-def profile_th1520_trace(trace_data, indicator, frequency):
-    """Profile trace data for th1520.
-
-    Parameters
-    ----------
-    trace_data : dict
-        Original trace data in th1520.
-
-    indicator : list
-        Indicator type to profile.
-
-    frequency : int
-        NPU frequency
-
-    Returns
-    -------
-    result : list[OrderedDict]
-        The results of profiler.
-    """
-    result = list()
-    for layer in trace_data["layers"]:
-        l_data = collections.OrderedDict()
-        # op
-        l_data["op"] = collections.OrderedDict()
-        l_data["op"]["type"] = layer["ops"]
-        l_data["op"]["name"] = layer["names"]
-        # ddr
-        if "mem" in indicator or "all" in indicator:
-            l_data["memory"] = collections.OrderedDict()
-            l_data["memory"]["accum_ddr"] = layer["accum_ddr"]
-            l_data["memory"]["coeff_ddr"] = layer["coeff_ddr"]
-            l_data["memory"]["input_ddr"] = layer["input_ddr"]
-            l_data["memory"]["output_ddr"] = layer["output_ddr"]
-        # cycle
-        if "cycle" in indicator or "all" in indicator:
-            l_data["cycle"] = layer["cycles"]
-            l_data["time_ms"] = layer["cycles"] / frequency * 1000  # ms
-
-        result.append(l_data)
-    return result
-
-
-def get_ddr_total_info(data):
-    """Get total information of ddr from profile data
-
-    Parameters
-    ----------
-    data : list[dict[str, dict[str, object]]]
-        Original data
-
-    res : dict
-        Total information
-    """
-    res = {"ddr": 0}
-    for d in data:
-        for k, v in d["ddr"].items():
-            res["ddr"] += v
-    return res
-
-
-def print_ddr_total_info(info):
-    print(f"Total ddr: {info['ddr']}")
-
-
-def get_cycle_total_info(data):
-    """Get total information of cycle from profile data
-
-    Parameters
-    ----------
-    data : list[dict[str, dict[str, object]]]
-        Original data
-
-    res : dict
-        Total information
-    """
-    res = {"cycle": 0, "time_ms": 0.0}
-    for d in data:
-        res["cycle"] += d["cycle"]
-        res["time_ms"] += d["time_ms"]
-    return res
-
-
-def print_cycle_total_info(info):
-    print(f"Total cycle: {info['cycle']}")
-    print(f"Total time(ms): {info['time_ms']}")
-
-
 def dump_profile_result(result, output_type, indicator, ir_type, output_dir=None):
     """Dump profile result according to specifying output_type.
 
@@ -283,11 +196,30 @@ def dump_profile_result(result, output_type, indicator, ir_type, output_dir=None
             if "mem" in indicator or "all" in indicator:
                 total_info = get_mem_total_info(result)
                 print_mem_total_info(total_info)
-        elif ir_type == "th1520":
+        elif ir_type == "qnn":
+            if "cal" in indicator or "all" in indicator:
+                total_info = get_cal_total_info(result)
+                print_cal_total_info(total_info)
+
             if "mem" in indicator or "all" in indicator:
                 total_info = get_mem_total_info(result)
                 print_mem_total_info(total_info)
 
-            if "cycle" in indicator or "all" in indicator:
-                total_info = get_cycle_total_info(result)
-                print_cycle_total_info(total_info)
+
+class ArchConfigBase:
+    def __init__(self, file=None) -> None:
+        self.data: dict = self.load_json(file)
+
+    def load_json(self, file: str):
+        data = None
+        if not file:
+            return data
+        if not file.endswith(".json") or not os.path.exists(file):
+            raise HHBException(f"File not exists or is not .json format: {file}")
+
+        with open(file, "r") as f:
+            data = json.load(f)
+        return data
+
+    def initialize(self):
+        pass

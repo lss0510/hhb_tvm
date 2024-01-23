@@ -21,7 +21,6 @@ import os
 import glob
 import functools
 import logging
-from pathlib import Path
 
 import cv2
 import numpy as np

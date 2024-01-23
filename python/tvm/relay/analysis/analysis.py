@@ -296,6 +296,30 @@ def get_aitrace_data(expr, target=None):
     return _ffi_api.GetAiTraceData(expr, target)
 
 
+def qnn_aitrace_data(expr, target=None):
+    """
+    QNN Profile model and get some statistic information, such as calculation amount,
+    memory info etc.
+
+    Parameters
+    ----------
+    expr : tvm.relay.Expr
+        The input expression
+
+    target : str, :any:`tvm.target.Target`, or dict of str(i.e. device/context
+    name) to str/tvm.target.Target, optional
+        For profiler tools, it is a config target.
+
+    Returns
+    -------
+    result : Array[Map[str, Map[str, objectref]]]
+        All profiler information of each layer.
+    """
+    if not target:
+        target = Target("trace -type=all")
+    return _ffi_api.QnnAiTraceData(expr, target)
+
+
 def unmatched_cases(match, mod=None):
     """
     Finds cases that the match expression does not catch, if any.

@@ -41,7 +41,6 @@ from .core.common import (
     ALL_ARGUMENTS_DESC,
     collect_arguments_info,
     AttributeDict,
-    get_target,
 )
 from .core.hhbir_manage import (
     guess_ir_type,
@@ -55,10 +54,6 @@ from .core.hhbir_manage import (
     get_output_info_from_relay,
 )
 from .core.codegen_manage import collect_codegen_config, set_codegen_config
-from .core.preprocess_manage import (
-    collect_preprocess_config,
-    set_preprocess_params,
-)
 from .core.quantization_manage import get_config_dict
 
 # pylint: disable=invalid-name

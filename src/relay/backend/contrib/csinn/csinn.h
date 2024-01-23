@@ -92,7 +92,7 @@ struct output_element {
   std::vector<string> names;
 };
 
-#define HHB_VERSION "2.6.0"
+#define HHB_VERSION "2.8.1"
 
 /*! \brief Attributes to store the options for CSI-NN2 */
 struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
@@ -167,6 +167,8 @@ struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
   double low_bound_scale;
   double high_bound_scale;
 
+  bool show_session_run_time;
+
   TVM_DECLARE_ATTRS(CSINNConfigNode, "ext.attrs.CSINNConfigNode") {
     TVM_ATTR_FIELD(ahead_of_time).set_default("unset");
     TVM_ATTR_FIELD(sid).set_default("csinn");
@@ -230,6 +232,7 @@ struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
     TVM_ATTR_FIELD(matrix_extension_mlen).set_default(0);
     TVM_ATTR_FIELD(low_bound_scale).set_default(1.0);
     TVM_ATTR_FIELD(high_bound_scale).set_default(1.0);
+    TVM_ATTR_FIELD(show_session_run_time).set_default(false);
   }
 };
 
@@ -266,6 +269,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
     this->hybrid_quantization_scheme = opt_cfg->hybrid_quantization_scheme;
     this->hybrid_layer_name = __convert_string_list(opt_cfg->hybrid_layer_name);
     this->auto_hybrid_quantization = opt_cfg->auto_hybrid_quantization;
+    this->show_session_run_time = opt_cfg->show_session_run_time;
 
     if (this->target_ == "th1520" && !auto_hybrid_quantization) {
       target_name_ = "CSINN_TH1520";
@@ -660,6 +664,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
   string hybrid_quantization_scheme{"unset"};
   std::vector<string> hybrid_layer_name;
   bool auto_hybrid_quantization{false};
+  bool show_session_run_time{false};
   std::map<string, string> output2params;
 
   /*
@@ -1051,6 +1056,8 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       return CSINN_QUANT_UINT8_SYM;
     } else if (str == "CSINN_QUANT_INT8_ASYM") {
       return CSINN_QUANT_INT8_ASYM;
+    } else if (str == "CSINN_QUANT_INT8_ASYM_W_SYM") {
+      return CSINN_QUANT_INT8_ASYM_W_SYM;
     } else if (str == "CSINN_QUANT_INT8_SYM") {
       return CSINN_QUANT_INT8_SYM;
     } else if (str == "CSINN_QUANT_INT16_SYM") {

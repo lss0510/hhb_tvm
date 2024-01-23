@@ -3548,7 +3548,7 @@ def csi_scatter_nd(data, indices, updates, out_dtype, q_params, layer_name=""):
     return _make.CSIScatterND(data, indices, updates, out_dtype, q_params, layer_name)
 
 
-def csi_segment_max(data, ids, length, out_dtype, q_params, layer_name=""):
+def csi_segment_max(data, ids, num_segments, out_dtype, q_params, layer_name=""):
     """Quantized segment max.
 
     Parameters
@@ -3564,10 +3564,10 @@ def csi_segment_max(data, ids, length, out_dtype, q_params, layer_name=""):
         The computed result.
 
     """
-    return _make.CSISegmentMax(data, ids, length, out_dtype, q_params, layer_name)
+    return _make.CSISegmentMax(data, ids, num_segments, out_dtype, q_params, layer_name)
 
 
-def csi_segment_min(data, ids, length, out_dtype, q_params, layer_name=""):
+def csi_segment_min(data, ids, num_segments, out_dtype, q_params, layer_name=""):
     """Quantized segment max.
 
     Parameters
@@ -3583,10 +3583,10 @@ def csi_segment_min(data, ids, length, out_dtype, q_params, layer_name=""):
         The computed result.
 
     """
-    return _make.CSISegmentMin(data, ids, length, out_dtype, q_params, layer_name)
+    return _make.CSISegmentMin(data, ids, num_segments, out_dtype, q_params, layer_name)
 
 
-def csi_segment_mean(data, ids, length, out_dtype, q_params, layer_name=""):
+def csi_segment_mean(data, ids, num_segments, out_dtype, q_params, layer_name=""):
     """Quantized segment max.
 
     Parameters
@@ -3602,10 +3602,10 @@ def csi_segment_mean(data, ids, length, out_dtype, q_params, layer_name=""):
         The computed result.
 
     """
-    return _make.CSISegmentMean(data, ids, length, out_dtype, q_params, layer_name)
+    return _make.CSISegmentMean(data, ids, num_segments, out_dtype, q_params, layer_name)
 
 
-def csi_segment_prod(data, ids, length, out_dtype, q_params, layer_name=""):
+def csi_segment_prod(data, ids, num_segments, out_dtype, q_params, layer_name=""):
     """Quantized segment max.
 
     Parameters
@@ -3621,10 +3621,10 @@ def csi_segment_prod(data, ids, length, out_dtype, q_params, layer_name=""):
         The computed result.
 
     """
-    return _make.CSISegmentProd(data, ids, length, out_dtype, q_params, layer_name)
+    return _make.CSISegmentProd(data, ids, num_segments, out_dtype, q_params, layer_name)
 
 
-def csi_segment_sum(data, ids, length, out_dtype, q_params, layer_name=""):
+def csi_segment_sum(data, ids, num_segments, out_dtype, q_params, layer_name=""):
     """Quantized segment max.
 
     Parameters
@@ -3640,7 +3640,7 @@ def csi_segment_sum(data, ids, length, out_dtype, q_params, layer_name=""):
         The computed result.
 
     """
-    return _make.CSISegmentSum(data, ids, length, out_dtype, q_params, layer_name)
+    return _make.CSISegmentSum(data, ids, num_segments, out_dtype, q_params, layer_name)
 
 
 def csi_log(data, out_dtype, q_params, layer_name=""):
@@ -4547,7 +4547,7 @@ def csi_one_hot(
     indices,
     depth,
     axis,
-    dtype,
+    out_dtype,
     q_params,
     layer_name="",
 ):
@@ -4567,7 +4567,7 @@ def csi_one_hot(
     axis : int
         Axis to fill.
 
-    dtype : str
+    out_dtype : str
         Data type of the output tensor.
 
     Returns
@@ -4586,14 +4586,14 @@ def csi_one_hot(
              [0, 1, 0],
              [0, 0, 1]]
     """
-    return _make.CSIOneHot(indices, depth, axis, dtype, q_params, layer_name)
+    return _make.CSIOneHot(indices, depth, axis, out_dtype, q_params, layer_name)
 
 
 def csi_where(
     condition,
     x,
     y,
-    dtype,
+    out_dtype,
     q_params,
     layer_name="",
 ):
@@ -4634,7 +4634,7 @@ def csi_where(
         condition = [[1], [0]]
         relay.where(conditon, x, y) = [[1, 2], [7, 8]]
     """
-    return _make.CSIWhere(condition, x, y, dtype, q_params, layer_name)
+    return _make.CSIWhere(condition, x, y, out_dtype, q_params, layer_name)
 
 
 # register fuse pattern for qnn ops
@@ -4798,3 +4798,25 @@ def csi_dequantize(
     return _make.CSIDequantize(
         data, input_scale, input_zero_point, axis, out_dtype, q_params, layer_name
     )
+
+
+def csi_data_convert(
+    data,
+    out_dtype,
+    q_params,
+    layer_name="",
+):
+    r"""DataConvert op
+    This operator convert tensor with one dtype into tensor with another dtype.
+
+    Parameters
+    ----------
+    data : tvm.relay.Expr
+        The input tensor to be dequantized. Can be of type [int8, uint8, int32].
+
+    Returns
+    -------
+    result : tvm.relay.Expr
+        The computed result.
+    """
+    return _make.CSIDataConvert(data, out_dtype, q_params, layer_name)

@@ -31,7 +31,7 @@ def load_model(model_path):
         model_path = os.path.join(MODEL_DIR, model_path)
 
     model_path = bytes(model_path, encoding="utf8")
-    model_path = ctypes.create_string_buffer(model_path, size=len(model_path))
+    model_path = ctypes.create_string_buffer(model_path, size=(len(model_path) + 1))
     sess = model_lib.load_model(model_path)
 
     return sess

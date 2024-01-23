@@ -31,15 +31,15 @@ from .custom_fusion_pass import (
     FuseWhereSoftmax,
     Resume4DimsMatMul,
     FuseActivateQuantInfo,
-    fuse_input_quant_info,
-    fuse_dequantize_op,
+    FuseInputQuantInfo,
+    FuseDequantizeOp,
 )
 from .convert_to_relay import convert_to_relay
 from .qnn_transform import QNNSeparateRepeatedQDQ, QNNFuseQDQ
 from .qnn_transform import QNNTh1520InsertReluBetweenSigmoidAndMul
 from .qnn_transform import QNNCheckValidQuantParams
 from .qnn_transform import QNNTh1520InsertAddBetweenLeakyReluAndAdd
-from .qnn_transform import QNNDumpToJson
+from .qnn_transform import QNNDumpToJson, QNNFuseConvDepthtospace
 
 from .op_spliter import ConvSpliter
 
@@ -53,7 +53,6 @@ from ._convert_to_csi import (
     convert_to_csi_qnn,
     fuse_layer,
     optimize_quantization,
-    current_csinn_config,
     csi_op,
     rename_call,
     unify_quant_params,
@@ -510,7 +509,7 @@ def detect_quantized_model(mod):
     return ih.quant_schema
 
 
-def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
+def quantize_hhb(module, params=None, curr_qconfig=None, dataset=None, target="x86_ref"):
     """The quantization procedure.
 
     Parameters
@@ -533,8 +532,7 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
 
     detected_quant_type = detect_quantized_model(module)
 
-    curr_qconfig = current_csinn_config()
-    if target in ("th1520", "hth1520") and curr_qconfig.quantization_scheme not in [
+    if target in ("th1520", "hth1520") and curr_qconfig["quantization_scheme"] not in [
         "int16_sym",
         "int8_sym",
     ]:
@@ -562,7 +560,7 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
     ]
     if call_count > 1:
         opt_seq.insert(2, _transform.SimplifyExpr())
-    if curr_qconfig.use_custom_fusion:
+    if curr_qconfig["use_custom_fusion"]:
         logger.warning("Using custom fusion.")
         opt_seq += [FuseCacheMatMul(), FuseLayerNormal(), TConv1dAddT(), FuseCacheConv1d()]
     optimizer = transform.Sequential(opt_seq)
@@ -571,25 +569,25 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
     logger.debug("Optimized model:")
     logger.debug(module["main"])
     logger.log(LOG, "Optimization completed!")
-    module = save_const_output(module, os.path.dirname(curr_qconfig.params_path))
+    module = save_const_output(module, os.path.dirname(curr_qconfig["params_path"]))
     logger.debug("save const output")
 
     quanted_model = _check_unsupported_ops(target, module)
 
     dtype_float = False
-    if curr_qconfig.dtype_weight in ("float16", "bfloat16") or (
-        (target not in ("th1520", "hth1520")) and curr_qconfig.dtype_weight == "float32"
+    if curr_qconfig["dtype_weight"] in ("float16", "bfloat16") or (
+        (target not in ("th1520", "hth1520")) and curr_qconfig["dtype_weight"] == "float32"
     ):
         if not (
             target in ("c906", "rvm", "c908", "c920", "c920v2")
-            and curr_qconfig.calibrate_mode == "scale"
+            and curr_qconfig["calibrate_mode"] == "scale"
         ):
             dtype_float = True
 
-    if curr_qconfig.quantization_scheme == "float16_w_int8":
+    if curr_qconfig["quantization_scheme"] == "float16_w_int8":
         dtype_float = False
 
-    if curr_qconfig.convert_to_relay and quanted_model:
+    if curr_qconfig["convert_to_relay"] and quanted_model:
         convert_to_relay(module)
         quanted_model = False
 
@@ -604,14 +602,24 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
                 logger.log(LOG, "Ignore calibrate dataset in quantized model.")
             else:
                 logger.log(LOG, "Ignore calibrate dataset in f16/bf16/f32 conversion.")
-        module = convert_to_csi_qnn(module, None)
+        module = convert_to_csi_qnn(
+            module,
+            None,
+            curr_qconfig["channel_quantization"],
+            curr_qconfig["channel_quantization_ratio_threshold"],
+        )
         logger.debug("Converted model:")
         logger.debug(module["main"])
         logger.log(LOG, "Conversion completed!")
     elif dataset and not quanted_model:
-        quant_params = calibration(module, dataset)
+        quant_params = calibration(module, dataset, curr_qconfig)
         logger.log(LOG, "Start conversion to csinn.")
-        module = convert_to_csi_qnn(module, quant_params)
+        module = convert_to_csi_qnn(
+            module,
+            quant_params,
+            curr_qconfig["channel_quantization"],
+            curr_qconfig["channel_quantization_ratio_threshold"],
+        )
         logger.debug("Converted model:")
         logger.debug(module["main"])
         logger.log(LOG, "Conversion completed!")
@@ -621,7 +629,7 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
 
     logger.log(LOG, "Start operator fusion.")
     fuse_pass = [Conv2dSqueezeAdd()]
-    if curr_qconfig.use_custom_fusion:
+    if curr_qconfig["use_custom_fusion"]:
         logger.warning("Using custom fusion.")
         fuse_pass += [FuseWhereSoftmax(), Resume4DimsMatMul()]
     fuser = transform.Sequential(fuse_pass)
@@ -630,12 +638,14 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
     # fuse quantization info
     if orig_quantized_model:
         logger.log(LOG, "Fuse quantize/dequantize nodes into ops.")
-        module = FuseActivateQuantInfo()(module)
-        module = fuse_input_quant_info(module)
-        module = fuse_dequantize_op(module)
+        fuse_pass = [FuseActivateQuantInfo(), FuseInputQuantInfo(), FuseDequantizeOp()]
+        fuser = transform.Sequential(fuse_pass)
+        module = fuser(module)
         logger.debug(module["main"])
 
-    csi_module = fuse_layer(module)
+    csi_module = fuse_layer(module, curr_qconfig)
+    csi_module = QNNFuseConvDepthtospace()(csi_module)
+
     logger.debug("Fused model:")
     logger.debug(csi_module["main"])
     logger.log(LOG, "Operator fusion completed!")
@@ -644,7 +654,7 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
         csi_module = unify_quant_params(csi_module)
 
     csi_module = optimize_quantization(
-        csi_module, curr_qconfig.broadcast_quantization, target=curr_qconfig.target
+        csi_module, curr_qconfig["broadcast_quantization"], target=curr_qconfig["target"]
     )
 
     logger.log(LOG, "Start operator split.")
@@ -657,7 +667,7 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
 
     logger.log(LOG, "Start layout convert.")
     csi_module = csi_layout_convert(
-        csi_module, dest_layout=curr_qconfig.layout, align=curr_qconfig.h_align
+        csi_module, dest_layout=curr_qconfig["layout"], align=curr_qconfig["h_align"]
     )
     logger.log(LOG, "Layout convert completed!")
 
@@ -670,29 +680,30 @@ def quantize_hhb(module, params=None, dataset=None, target="x86_ref"):
     csi_module = rename_call(csi_module, call_count)
     logger.debug("specify name for call node completed!")
 
-    if curr_qconfig.dump_quantization_loss or curr_qconfig.auto_hybrid_quantization:
+    if curr_qconfig["dump_quantization_loss"] or curr_qconfig["auto_hybrid_quantization"]:
         logger.log(LOG, "Start quantization analysis.")
-        config_dict = convert_csinn_options(curr_qconfig)
-        target_dir = os.path.dirname(config_dict["params_path"])
+        target_dir = os.path.dirname(curr_qconfig["params_path"])
 
-        if curr_qconfig.from_quant_file:
+        if curr_qconfig["from_quant_file"]:
             logger.log(
                 LOG,
                 "Get quantization loss directly from file: %s",
                 os.path.join(target_dir, "model.quant.json"),
             )
         else:
-            dlo = DumpLayerOutput(dataset, config_dict)
+            dlo = DumpLayerOutput(dataset, curr_qconfig)
             dlo.visit(csi_module["main"])
 
             mqi = ModelQuantizationInfo()
-            mqi.update_layer_info(dlo.float_outs_map, dlo.qnn_outs_map, dlo.quant_info, config_dict)
+            mqi.update_layer_info(
+                dlo.float_outs_map, dlo.qnn_outs_map, dlo.quant_info, curr_qconfig
+            )
 
-            if curr_qconfig.auto_hybrid_quantization:
+            if curr_qconfig["auto_hybrid_quantization"]:
                 mqi.update_hybrid_layers(
-                    config_dict["quantization_loss_algorithm"],
-                    config_dict["quantization_loss_threshold"],
-                    config_dict["loss_threshold_type"],
+                    curr_qconfig["quantization_loss_algorithm"],
+                    curr_qconfig["quantization_loss_threshold"],
+                    curr_qconfig["loss_threshold_type"],
                 )
             json_data = mqi.to_dict()
             to_json(json_data, os.path.join(target_dir, "model.quant.json"))
@@ -743,9 +754,12 @@ def optimization_phase0(module):
     return opt_module
 
 
-def optimization_phase1(module):
+def optimization_phase1(module, use_custom_fusion):
     """Optimization procedures for transformer in relay."""
-    opt_seq = [FuseCacheMatMul(), FuseLayerNormal(), TConv1dAddT(), FuseCacheConv1d()]
+
+    opt_seq = [FuseLayerNormal()]
+    if use_custom_fusion:
+        opt_seq += [FuseCacheMatMul(), TConv1dAddT(), FuseCacheConv1d()]
     optimizer = transform.Sequential(opt_seq)
     opt_module = optimizer(module)
     return opt_module
@@ -762,7 +776,7 @@ def optimization_th1520(module):
     return opt_module
 
 
-def get_quantized_model(module, params=None, target="x86_ref"):
+def get_quantized_model(module, params=None, curr_config=None, target="x86_ref"):
     """Convert quantized model into qnn ir.
 
     Parameters
@@ -782,30 +796,40 @@ def get_quantized_model(module, params=None, target="x86_ref"):
     ret: Function
         The graph after quantization
     """
-    curr_qconfig = current_csinn_config()
     if params:
         module["main"] = _bind_params(module["main"], params)
 
     module = execute_qnn_pass_with_log("optimization for native relay", optimization_phase0, module)
 
-    if curr_qconfig.use_custom_fusion:
-        module = execute_qnn_pass_with_log(
-            "optimization for transformer ops", optimization_phase1, module
-        )
+    module = execute_qnn_pass_with_log(
+        "optimization for transformer ops",
+        optimization_phase1,
+        module,
+        curr_config["use_custom_fusion"],
+    )
 
     module = execute_qnn_pass_with_log(
-        "save const output", save_const_output, module, os.path.dirname(curr_qconfig.params_path)
+        "save const output", save_const_output, module, os.path.dirname(curr_config["params_path"])
     )
     _ = _check_unsupported_ops(target, module)
 
-    qnn_module = execute_qnn_pass_with_log("conversion to csinn", convert_to_csi_qnn, module, None)
+    qnn_module = execute_qnn_pass_with_log(
+        "conversion to csinn",
+        convert_to_csi_qnn,
+        module,
+        None,
+        curr_config["channel_quantization"],
+        curr_config["channel_quantization_ratio_threshold"],
+    )
 
-    qdq_fuse_pass = transform.Sequential([QNNSeparateRepeatedQDQ(), QNNFuseQDQ()])
+    qdq_fuse_pass = transform.Sequential([QNNSeparateRepeatedQDQ(), QNNFuseQDQ(curr_config)])
     qnn_module = execute_qnn_pass_with_log(
         "fuse quantize/dequantize nodes into ops", qdq_fuse_pass, qnn_module
     )
 
-    qnn_module = execute_qnn_pass_with_log("graph fusion for qnn", fuse_layer, qnn_module)
+    qnn_module = execute_qnn_pass_with_log(
+        "graph fusion for qnn", fuse_layer, qnn_module, curr_config
+    )
 
     if target in ("th1520", "hth1520"):
         # fix acc bug in th1520 npu
@@ -817,7 +841,7 @@ def get_quantized_model(module, params=None, target="x86_ref"):
     qnn_module = QNNCheckValidQuantParams(board=target)(qnn_module)
 
     if logger.level <= logging.DEBUG:
-        json_file = os.path.dirname(curr_qconfig.params_path)
+        json_file = os.path.dirname(curr_config["params_path"])
         json_file = os.path.join(json_file, "model_qnn.json")
         qnn_module = QNNDumpToJson(json_file)(qnn_module)
         logger.debug("save qnn ir structure into %s", json_file)

@@ -26,7 +26,7 @@ from tqdm import tqdm
 import tvm
 from tvm import relay
 from tvm.ir import IRModule
-
+from tvm.relay.transform import function_pass
 from .asy_kl_divergence import _find_scale_by_asy_kl
 from .kl_divergence import _find_scale_by_kl
 from ..expr import Var, Call, TupleGetItem, Constant, Tuple, const
@@ -99,7 +99,7 @@ statistical_func_map = {
 }
 
 
-def get_weight_params(weight_val):
+def get_weight_params(weight_val, curr_config):
     """
     Channel quantization only supports NCHW layout model.
     For constants, all dimensions except the first one will be seem as a whole.
@@ -110,11 +110,11 @@ def get_weight_params(weight_val):
     def _shape_quant_map(data):
         return [data] if len(data.shape) == 0 else data
 
-    calibrate_mode = current_csinn_config().weight_scale
-    channel_quantize = current_csinn_config().channel_quantization
-    quantize_type = current_csinn_config().weight_quantized_type
+    calibrate_mode = curr_config["weight_scale"]
+    channel_quantize = curr_config["channel_quantization"]
+    quantize_type = curr_config["weight_quantized_type"]
     if calibrate_mode == "defult":
-        calibrate_mode = current_csinn_config().calibrate_mode
+        calibrate_mode = curr_config["calibrate_mode"]
     # Check for legitimacy
     if calibrate_mode not in statistical_func_map:
         raise Exception(f"Weight not support this calibrate mode: {calibrate_mode}")
@@ -129,7 +129,7 @@ def get_weight_params(weight_val):
     return [CONST, USE_MINMAX] + min_max_value
 
 
-def get_out_params(outs):
+def get_out_params(outs, calibrate_mode, quantize_type):
     """
     Channel quantization only supports NCHW layout model.
     For every layer's inputs and oututs, all dimensions except the second one
@@ -151,12 +151,10 @@ def get_out_params(outs):
 
     elem_size = outs[0].size
     datas = np.array(outs)
-    calibrate_mode = current_csinn_config().calibrate_mode
-    channel_quantize = current_csinn_config().channel_quantization
 
     # (Fixme @chenf:) activation/input can not be per-channel quantizaiton.
     channel_quantize = False
-    quantize_type = current_csinn_config().activate_quantized_type
+
     # Check for legitimacy
     if calibrate_mode not in statistical_func_map:
         raise Exception(f"Not support this calibrate mode: {calibrate_mode}")
@@ -191,7 +189,7 @@ def get_layer_name(call, layer_index):
     return layer_name
 
 
-def calibration(module, dataset):
+def calibration(module, dataset, curr_config):
     """Calibration: normal scale for uint8 asymmetric quantization,
         only use max and min value, to calculate scale and zero point.
 
@@ -238,8 +236,9 @@ def calibration(module, dataset):
     class Calibration(relay.ExprVisitor):
         """get calibration params"""
 
-        def __init__(self, inputs, pool, elem_count, layer_count):
+        def __init__(self, inputs, pool, elem_count, layer_count, curr_config):
             super(Calibration, self).__init__()
+            self.config = curr_config
             self.outs_map = {}
             self.quant_params = {}
             self.inputs = inputs
@@ -265,9 +264,13 @@ def calibration(module, dataset):
                 1: activation
             """
             if kind == ACTIVATION:
-                s = get_out_params(data)
+                s = get_out_params(
+                    data,
+                    self.config["calibrate_mode"],
+                    self.config["activate_quantized_type"],
+                )
             else:
-                s = get_weight_params(data.data.asnumpy())
+                s = get_weight_params(data.data.asnumpy(), self.config)
 
             self.quant_params[call].append(s)
 
@@ -426,7 +429,7 @@ def calibration(module, dataset):
     optimizer = GetLayerCount()
     optimizer.visit(module["main"])
     elem_count, layer_count = optimizer.elem_count, optimizer.layer_count
-    get_out = Calibration(dataset, None, elem_count, layer_count)
+    get_out = Calibration(dataset, None, elem_count, layer_count, curr_config)
     get_out.visit(module["main"])
     if LOG >= logger.getEffectiveLevel():
         get_out.pbar.close()
@@ -470,6 +473,7 @@ class csi_op:
             "qnn.csi.cos": relay.qnn.op.csi_cos,
             "qnn.csi.cosh": relay.qnn.op.csi_cosh,
             "qnn.csi.depth_to_space": relay.qnn.op.csi_depth_to_space,
+            "qnn.csi.erf": relay.qnn.op.csi_erf,
             "qnn.csi.exp": relay.qnn.op.csi_exp,
             "qnn.csi.expand_dims": relay.qnn.op.csi_expand_dims,
             "qnn.csi.flatten": relay.qnn.op.csi_flatten,
@@ -564,6 +568,7 @@ class csi_op:
             "qnn.csi.where_softmax": relay.qnn.op.csi_where_softmax,
             "qnn.csi.quantize": relay.qnn.op.csi_quantize,
             "qnn.csi.dequantize": relay.qnn.op.csi_dequantize,
+            "qnn.csi.layer_norm": relay.qnn.op.csi_layer_norm,
         }
 
         self.all_handle = self._get_all_handle()
@@ -592,7 +597,9 @@ class csi_op:
         return res
 
 
-def convert_to_csi_qnn(mod, quant_params):
+def convert_to_csi_qnn(
+    mod, quant_params, channel_quantization, channel_quantization_ratio_threshold
+):
     """The convert_to_csi_qnn convert add ops to qnn.csi.* ops.
 
     Returns
@@ -606,13 +613,11 @@ def convert_to_csi_qnn(mod, quant_params):
 
         def __init__(self):
             super(ConvertToCSIMutator, self).__init__()
-            self.channel_quant = current_csinn_config().channel_quantization
+            self.channel_quant = channel_quantization
             self.bias_init = [0, 0, 1, 0.0, 0.0] if self.channel_quant else [0, 0, 0, 0.0, 0.0]
             if quant_params:
                 self.layer_index = list(enumerate(quant_params))
-                self.quantitative_threshold = (
-                    current_csinn_config().channel_quantization_ratio_threshold
-                )
+                self.quantitative_threshold = channel_quantization_ratio_threshold
                 if self.quantitative_threshold and self.channel_quant:
                     logger.warning(
                         "Quantitative parameters optimizer will be used. "
@@ -1384,10 +1389,11 @@ def convert_to_csi_qnn(mod, quant_params):
             elif call.op.name == "divide":
                 lhs = op_args[0]
                 rhs = op_args[1]
-                if isinstance(rhs, Constant):
+                if isinstance(rhs, Constant) and q_params[1][1] == USE_MINMAX:
                     rhs_value = rhs.data.asnumpy()
                     if rhs_value.dtype == "float32":
                         rhs_value = 1.0 / rhs.data.asnumpy()
+                        q_params[1][3:] = list(1.0 / np.array(q_params[1][3:], dtype=np.float32))
                         rhs = relay.expr.const(rhs_value, "float32")
                         new_call = relay.qnn.op.csi_mul(
                             lhs, rhs, q_params, layer_name=get_layer_name(call, layer_index)
@@ -1592,7 +1598,8 @@ def convert_to_csi_qnn(mod, quant_params):
                     begin = expand_begin
                     end = expand_end
                     strides = expand_strides
-
+                if cts.axes is None and len(cts.strides) != len(cts.begin):
+                    strides = [1] * len(cts.begin)
                 new_call = relay.qnn.op.csi_strided_slice(
                     data,
                     begin,
@@ -2068,7 +2075,669 @@ def _get_csi_op(name):
     return csi_op().all_handle[name]
 
 
-def fuse_layer(mod):
+@function_pass(opt_level=1)
+class FuseBias:
+    """Fuse bias class which only valid in NCHW layout"""
+
+    def __init__(self):
+        self.target_ops = [
+            "qnn.csi.conv2d",
+            "qnn.csi.dense",
+            "qnn.csi.deconv2d",
+            "qnn.csi.conv1d",
+        ]
+
+    def get_new_op(self, call, pre_call, op_args):
+        new_attrs = _qnn_attrs(pre_call.attrs)
+        data = pre_call.args[0]
+        weight = pre_call.args[1]
+        bias = op_args[1]
+        new_attrs["q_params"][-1] = call.attrs.q_params[-1]  # output
+        new_attrs["q_params"][2] = call.attrs.q_params[1]  # bias
+        new_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
+        return _get_csi_op(pre_call.op.name)(data, weight, bias, **new_attrs)
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        fuse_bias = self
+
+        class FuseBiasMutator(relay.ExprMutator):
+            """Fuse bias"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                pre_call = op_args[0]
+                if call.op.name == "qnn.csi.bias_add":
+                    if not isinstance(pre_call, Call):
+                        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+
+                    if pre_call.op.name in fuse_bias.target_ops:
+                        return fuse_bias.get_new_op(call, pre_call, op_args)
+
+                elif call.op.name == "qnn.csi.add":
+                    if not isinstance(pre_call, Call) or not isinstance(op_args[1], Constant):
+                        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                    in_name = pre_call.op.name
+                    if in_name not in fuse_bias.target_ops:
+                        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+
+                    bias = op_args[1].data.asnumpy()
+                    b_shape = bias.shape
+                    in_shape = _infer_shape(pre_call)
+                    need_broadcast = False
+                    b_rank = len(b_shape)
+                    if b_rank == 1:
+                        b_size = b_shape[0]
+                        need_broadcast = b_shape[0] == 1
+                    elif b_rank == 0:
+                        need_broadcast = True
+                    else:
+                        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+
+                    if need_broadcast:
+                        if in_name == "qnn.csi.dense":
+                            bias = np.zeros(in_shape[2]) + bias
+                            op_args[1] = relay.const(bias)
+                            return fuse_bias.get_new_op(call, pre_call, op_args)
+                        else:
+                            bias = np.zeros(in_shape[1]) + bias
+                            op_args[1] = relay.const(bias)
+                            return fuse_bias.get_new_op(call, pre_call, op_args)
+                    else:
+                        if in_name == "qnn.csi.dense":
+                            if b_size == in_shape[-1]:
+                                return fuse_bias.get_new_op(call, pre_call, op_args)
+                        else:
+                            if b_size == in_shape[1]:
+                                return fuse_bias.get_new_op(call, pre_call, op_args)
+
+                return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+
+        return FuseBiasMutator().visit(func)
+
+
+@function_pass(opt_level=1)
+class FuseConvRelu:
+    """Fuse relu layer helper class"""
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+
+        class FuseConvReluMutator(relay.ExprMutator):
+            """Fuse conv and relu"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+
+                if call.op.name == "qnn.csi.relu":
+                    pre_call = op_args[0]
+                    if isinstance(pre_call, Call) and pre_call.op.name == "qnn.csi.conv2d":
+                        new_attrs = _qnn_attrs(pre_call.attrs)
+                        data = pre_call.args[0]
+                        weight = pre_call.args[1]
+                        bias = pre_call.args[2]
+                        new_attrs["q_params"][-1] = call.attrs.q_params[-1]
+                        new_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
+                        new_call = relay.qnn.op.csi_conv2d_relu(data, weight, bias, **new_attrs)
+                        return new_call
+
+                # elif pre_call.op.name == "qnn.csi.dense":
+                #     data = pre_call.args[0]
+                #     weight = pre_call.args[1]
+                #     bias = pre_call.op_args[2]
+                #     new_attrs['axis'] = 0
+                #     new_attrs['output_scale'] = call.attrs.output_scale
+                #     new_attrs['output_zero_point'] = call.attrs.output_zero_point
+                #     new_call = relay.qnn.op.csi_dense(data, weight, bias, **new_attrs)
+                # elif pre_call.op.name == "qnn.csi.deconv2d":
+                #     data = pre_call.args[0]
+                #     weight = pre_call.args[1]
+                #     bias = pre_call.op_args[2]
+                #     new_attrs['output_scale'] = call.attrs.output_scale
+                #     new_attrs['output_zero_point'] = call.attrs.output_zero_point
+                #     new_call = relay.qnn.op.csi_deconv2d(data, weight, bias, **new_attrs)
+                elif call.op.name == "qnn.csi.relu6":
+                    pre_call = op_args[0]
+                    if pre_call.op.name == "qnn.csi.conv2d":
+                        new_attrs = _qnn_attrs(pre_call.attrs)
+                        data = pre_call.args[0]
+                        weight = pre_call.args[1]
+                        bias = pre_call.args[2]
+                        new_attrs["q_params"][-1] = call.attrs.q_params[-1]
+                        new_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
+                        new_call = relay.qnn.op.csi_conv2d_relu6(data, weight, bias, **new_attrs)
+                        return new_call
+
+                new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+
+                return new_call
+
+        return FuseConvReluMutator().visit(func)
+
+
+@function_pass(opt_level=1)
+class FusePad:
+    """Fuse pad layer helper class"""
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+
+        class FusePadMutator(relay.ExprMutator):
+            """Fuse pad"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+
+                if call.op.name == "qnn.csi.conv2d":
+                    pre_call = op_args[0]
+                    if not pre_call or isinstance(pre_call, tvm.relay.expr.Var):
+                        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                        return new_call
+
+                    if isinstance(pre_call, Call) and pre_call.op.name == "qnn.csi.pad":
+                        if not pre_call.attrs.pad_mode == "constant":
+                            new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                            return new_call
+
+                        new_attrs = _qnn_attrs(call.attrs)
+                        data = pre_call.args[0]
+                        weight = op_args[1]
+                        bias = op_args[2]
+
+                        new_attrs["q_params"][0] = pre_call.attrs.q_params[0]
+
+                        pad_len = len(call.attrs.padding)
+                        if pad_len == 4:
+                            new_attrs["padding"] = [
+                                pre_call.attrs.pad_width[2][0],
+                                pre_call.attrs.pad_width[2][1],
+                                pre_call.attrs.pad_width[3][0],
+                                pre_call.attrs.pad_width[3][1],
+                            ]
+                        elif pad_len == 2:
+                            new_attrs["padding"] = [
+                                pre_call.attrs.pad_width[2][0],
+                                pre_call.attrs.pad_width[3][0],
+                            ]
+                        else:
+                            raise ValueError("Unsupport padding size:", pad_len)
+                        new_attrs["layer_name"] += "_fuse_" + pre_call.attrs.layer_name
+                        new_call = relay.qnn.op.csi_conv2d(data, weight, bias, **new_attrs)
+                    else:
+                        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                else:
+                    new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                return new_call
+
+        return FusePadMutator().visit(func)
+
+
+@function_pass(opt_level=1)
+class FuseReshapeDense:
+    """Fuse reshape helper class"""
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+
+        class FuseReshapeDenseMutator(relay.ExprMutator):
+            """Fuse reshape and dense"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+
+                if call.op.name == "qnn.csi.dense":
+                    pre_call = op_args[0]
+                    new_attrs = _qnn_attrs(call.attrs)
+                    if isinstance(pre_call, Call) and pre_call.op.name == "qnn.csi.reshape":
+                        data = pre_call.args[0]
+                        if isinstance(data, Var):
+                            return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                        weight = call.args[1]
+                        bias = call.args[2]
+                        new_attrs["layer_name"] += "_fuse_" + pre_call.attrs.layer_name
+                        return relay.qnn.op.csi_dense(data, weight, bias, **new_attrs)
+
+                return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+
+        return FuseReshapeDenseMutator().visit(func)
+
+
+@function_pass(opt_level=1)
+class FuseReshape:
+    """Fuse reshape helper class"""
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+
+        class FuseReshapeMutator(relay.ExprMutator):
+            """Fuse reshape"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+
+                if call.op.name == "qnn.csi.reshape":
+                    pre_call = op_args[0]
+                    in_shape = _infer_shape(pre_call)
+                    curt_shape = _infer_shape(call)
+                    if isinstance(pre_call, Call) and pre_call.op.name == "qnn.csi.reshape":
+                        pre_attrs = _qnn_attrs(pre_call.attrs)
+                        crt_attrs = _qnn_attrs(call.attrs)
+                        crt_attrs["newshape"] = curt_shape
+                        crt_attrs["q_params"][0] = pre_attrs["q_params"][0]
+                        crt_attrs["layer_name"] += "_fuse_" + pre_attrs["layer_name"]
+                        return relay.qnn.op.csi_reshape(pre_call.args[0], **crt_attrs)
+                    elif in_shape == curt_shape:
+                        return pre_call
+                return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+
+        return FuseReshapeMutator().visit(func)
+
+
+@function_pass(opt_level=1)
+class FuseClip:
+    """Fuse clip helper class"""
+
+    def __init__(self):
+        self.changed_layer = {}
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        fuse_clip = self
+
+        class FuseClipMutator(relay.ExprMutator):
+            """Fuse Clip"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                current_attrs = _qnn_attrs(call.attrs)
+                if call.op.name in ["qnn.csi.clip", "qnn.csi.relu6"]:
+                    pre_call = op_args[0]
+                    if isinstance(pre_call, Call):
+                        pre_attrs = _qnn_attrs(pre_call.attrs)
+                        pre_attrs["q_params"][-1] = current_attrs["q_params"][-1]
+                        pre_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
+                        new_call = _get_csi_op(pre_call.op.name)(*pre_call.args, **pre_attrs)
+                        fuse_clip.changed_layer[hash(new_call)] = pre_attrs["q_params"][-1]
+                    else:
+                        new_call = _get_csi_op(call.op.name)(*op_args, **current_attrs)
+                else:
+                    for idx, arg in enumerate(op_args):
+                        hash_arg = hash(arg)
+                        if hash_arg in fuse_clip.changed_layer:
+                            current_attrs["q_params"][idx] = fuse_clip.changed_layer[hash_arg]
+                    new_call = _get_csi_op(call.op.name)(*op_args, **current_attrs)
+                return new_call
+
+        return FuseClipMutator().visit(func)
+
+
+@function_pass(opt_level=1)
+class FuseRelu:
+    """Fuse relu helper class"""
+
+    def __init__(self):
+        self.changed_layer = {}
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        fuse_relu = self
+
+        class FuseReluMutator(relay.ExprMutator):
+            """Fuse relu"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                current_attrs = _qnn_attrs(call.attrs)
+                if call.op.name == "qnn.csi.relu":
+                    pre_call = op_args[0]
+                    if isinstance(pre_call, Call):
+                        pre_attrs = _qnn_attrs(pre_call.attrs)
+                        pre_attrs["q_params"][-1] = current_attrs["q_params"][-1]
+                        pre_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
+                        new_call = _get_csi_op(pre_call.op.name)(*pre_call.args, **pre_attrs)
+                        fuse_relu.changed_layer[hash(new_call)] = pre_attrs["q_params"][-1]
+                    else:
+                        new_call = _get_csi_op(call.op.name)(*op_args, **current_attrs)
+                else:
+                    for idx, arg in enumerate(op_args):
+                        hash_arg = hash(arg)
+                        if hash_arg in fuse_relu.changed_layer:
+                            current_attrs["q_params"][idx] = fuse_relu.changed_layer[hash_arg]
+                    new_call = _get_csi_op(call.op.name)(*op_args, **current_attrs)
+                return new_call
+
+        return FuseReluMutator().visit(func)
+
+
+def fuse_params_add_mul_before_conv(weight, bias, mul_val, add_val):
+    """update the params in convolution op while add or/and mul op in front of it."""
+    assert len(weight.shape) == 4
+    new_weight = weight * mul_val
+    new_bias = weight * add_val
+    new_bias = np.sum(new_bias, (1, 2, 3))
+    new_bias = new_bias + bias
+
+    return new_weight.astype(np.float32), new_bias.reshape(-1).astype(np.float32)
+
+
+def update_conv_attrs(weight_val, attrs, config):
+    """update the attrubutions for conv2d op with new weight value."""
+    min_max_val = get_weight_params(weight_val, config)
+
+    attrs["q_params"][1] = min_max_val
+
+
+@function_pass(opt_level=1)
+class FuseAddBeforeConv:
+    """Fuse add op in front of the convolution op."""
+
+    def __init__(self, curr_config):
+        self.config = curr_config
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        _fuse_add = self
+
+        class FuseAddBeforeConvMutator(relay.ExprMutator):
+            """ "Fuse add op before conv"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+
+                if call.op.name == "qnn.csi.conv2d":
+                    new_conv2d_attrs = _qnn_attrs(call.attrs)
+                    pre_call = op_args[0]
+                    if (
+                        isinstance(pre_call, Call)
+                        and (pre_call.op.name in ("qnn.csi.add", "qnn.csi.bias_add"))
+                        and isinstance(pre_call.args[1], Constant)
+                        and sum(new_conv2d_attrs["padding"]) == 0
+                    ):
+                        data = pre_call.args[0]
+                        weight = op_args[1]
+                        bias = op_args[2]
+
+                        weight_val = weight.data.asnumpy()
+                        bias_val = bias.data.asnumpy()
+                        add_rhs_val = pre_call.args[1].data.asnumpy()
+
+                        if len(bias_val.shape) == 0:
+                            bias_val = np.zeros(weight_val.shape[0])
+                        if len(add_rhs_val.shape) == 1:
+                            add_rhs_val = np.reshape(add_rhs_val, (1, add_rhs_val.shape[0], 1, 1))
+
+                        if (
+                            add_rhs_val.size != weight_val.shape[1]
+                            or new_conv2d_attrs["groups"] > 1
+                        ):
+                            new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                            return new_call
+
+                        mul_rhs_val = np.ones_like(add_rhs_val)
+
+                        new_weight_val, new_bias_val = fuse_params_add_mul_before_conv(
+                            weight_val, bias_val, mul_rhs_val, add_rhs_val
+                        )
+
+                        new_conv2d_attrs["q_params"][0] = pre_call.attrs.q_params[0]
+                        update_conv_attrs(new_weight_val, new_conv2d_attrs, _fuse_add.config)
+
+                        weight.data.copyfrom(new_weight_val)
+                        bias = relay.expr.const(new_bias_val)
+
+                        new_call = relay.qnn.op.csi_conv2d(data, weight, bias, **new_conv2d_attrs)
+                        return new_call
+                    else:
+                        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                else:
+                    new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                return new_call
+
+        return FuseAddBeforeConvMutator().visit(func)
+
+
+@function_pass(opt_level=1)
+class FuseMulBeforeConv:
+    """Fuse mul op in front of the convolution op."""
+
+    def __init__(self, curr_config):
+        self.config = curr_config
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        _fuse_mul = self
+
+        class FuseMulBeforeConvMutator(relay.ExprMutator):
+            """Fuse mul before conv"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+
+                if call.op.name == "qnn.csi.conv2d":
+                    new_conv2d_attrs = _qnn_attrs(call.attrs)
+                    pre_call = op_args[0]
+                    if (
+                        isinstance(pre_call, Call)
+                        and pre_call.op.name == "qnn.csi.mul"
+                        and isinstance(pre_call.args[1], Constant)
+                    ):
+                        data = pre_call.args[0]
+                        weight = op_args[1]
+                        bias = op_args[2]
+
+                        weight_val = weight.data.asnumpy()
+                        bias_val = bias.data.asnumpy()
+                        mul_rhs_val = pre_call.args[1].data.asnumpy()
+
+                        if len(bias_val.shape) == 0:
+                            bias_val = np.zeros(weight_val.shape[0])
+                        if len(mul_rhs_val.shape) in [0, 1]:
+                            if len(mul_rhs_val.shape) == 1:
+                                mul_rhs_val = mul_rhs_val[0]
+                            mul_rhs_val = np.full((1, weight_val.shape[1], 1, 1), mul_rhs_val)
+                        if (
+                            mul_rhs_val.size != mul_rhs_val.shape[1]
+                            or new_conv2d_attrs["groups"] > 1
+                        ):
+                            new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                            return new_call
+
+                        add_rhs_val = np.zeros_like(mul_rhs_val)
+
+                        new_weight_val, new_bias_val = fuse_params_add_mul_before_conv(
+                            weight_val, bias_val, mul_rhs_val, add_rhs_val
+                        )
+
+                        new_conv2d_attrs["q_params"][0] = pre_call.attrs.q_params[0]
+
+                        update_conv_attrs(new_weight_val, new_conv2d_attrs, _fuse_mul.config)
+
+                        weight.data.copyfrom(new_weight_val)
+                        bias = relay.expr.const(new_bias_val)
+                        new_conv2d_attrs["layer_name"] += "_fuse_" + pre_call.attrs.layer_name
+                        new_call = relay.qnn.op.csi_conv2d(data, weight, bias, **new_conv2d_attrs)
+                        return new_call
+                    else:
+                        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                else:
+                    new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                return new_call
+
+        return FuseMulBeforeConvMutator().visit(func)
+
+
+def fuse_params_mul_after_conv(weight, mul_val):
+    """update the params in convolution op while mul op in behind it."""
+    assert len(weight.shape) == 4
+    mul_val = np.reshape(mul_val, (-1, 1, 1, 1))
+    new_weight = weight * mul_val
+    return new_weight.astype(np.float32)
+
+
+@function_pass(opt_level=1)
+class FuseAddAfterConv:
+    """Fuse add op in behind the convolution op."""
+
+    def __init__(self, curr_config):
+        self.config = curr_config
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        _fuse_add = self
+
+        class FuseAddAfterConvMutator(relay.ExprMutator):
+            """Fuse add after conv"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                if call.op.name in ("qnn.csi.add", "qnn.csi.bias_add") and isinstance(
+                    op_args[1], Constant
+                ):
+                    pre_call = op_args[0]
+                    if not isinstance(pre_call, Call):
+                        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                    if pre_call.op.name == "qnn.csi.conv2d":
+                        new_conv2d_attrs = _qnn_attrs(pre_call.attrs)
+                        data = pre_call.args[0]
+                        weight = pre_call.args[1]
+                        bias = pre_call.args[2]
+
+                        weight_val = weight.data.asnumpy()
+                        bias_val = bias.data.asnumpy()
+                        add_rhs_val = op_args[1].data.asnumpy()
+
+                        if add_rhs_val.size != weight_val.shape[0]:
+                            new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                            return new_call
+
+                        if len(bias_val.shape) == 0:
+                            bias_val = np.zeros(weight_val.shape[0])
+
+                        new_bias_val = add_rhs_val.reshape(-1) + bias_val
+                        new_conv2d_attrs["q_params"][-1] = call.attrs.q_params[-1]
+                        new_conv2d_attrs["q_params"][2] = get_weight_params(
+                            new_bias_val, _fuse_add.config
+                        )
+                        bias = relay.expr.const(new_bias_val)
+                        new_conv2d_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
+                        new_call = relay.qnn.op.csi_conv2d(data, weight, bias, **new_conv2d_attrs)
+                        return new_call
+                    elif pre_call.op.name == "qnn.csi.dense":
+                        new_dense_attrs = _qnn_attrs(pre_call.attrs)
+                        data = pre_call.args[0]
+                        weight = pre_call.args[1]
+                        bias = pre_call.args[2]
+
+                        weight_val = weight.data.asnumpy()
+                        bias_val = bias.data.asnumpy()
+                        add_rhs_val = op_args[1].data.asnumpy()
+
+                        if add_rhs_val.size != weight_val.shape[0]:
+                            new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                            return new_call
+
+                        if len(bias_val.shape) == 0:
+                            bias_val = np.zeros(weight_val.shape[0])
+
+                        new_bias_val = add_rhs_val.reshape(bias_val.shape) + bias_val
+
+                        new_dense_attrs["q_params"][-1] = call.attrs.q_params[-1]
+
+                        new_dense_attrs["q_params"][2] = get_weight_params(
+                            new_bias_val, _fuse_add.config
+                        )
+                        bias = relay.expr.const(new_bias_val)
+                        new_dense_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
+                        new_call = relay.qnn.op.csi_dense(data, weight, bias, **new_dense_attrs)
+                        return new_call
+                    else:
+                        if call.op.name == "qnn.csi.bias_add":
+                            lhs_shape = _infer_shape(pre_call)
+                            rhs_shape = op_args[1].checked_type.concrete_shape
+                            if len(lhs_shape) == 4 and len(rhs_shape) == 1:
+                                newshape = (1, -1, 1, 1)
+                                rhs_data = op_args[1].data.asnumpy()
+                                rhs_data = np.reshape(rhs_data, newshape)
+                                rhs = relay.expr.const(rhs_data)
+
+                                new_attrs = _qnn_attrs(call.attrs)
+                                new_call = relay.qnn.op.csi_add(pre_call, rhs, **new_attrs)
+                                return new_call
+                new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                return new_call
+
+        return FuseAddAfterConvMutator().visit(func)
+
+
+@function_pass(opt_level=1)
+class FuseMulAfterConv:
+    """Fuse mul op in behind the convolution op."""
+
+    def __init__(self, curr_config):
+        self.config = curr_config
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        _fuse_mul = self
+
+        class FuseMulAfterConvMutator(relay.ExprMutator):
+            """Fuse mul after conv"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                if call.op.name == "qnn.csi.mul" and isinstance(op_args[1], Constant):
+                    pre_call = op_args[0]
+                    if isinstance(pre_call, Call) and pre_call.op.name == "qnn.csi.conv2d":
+                        new_conv2d_attrs = _qnn_attrs(pre_call.attrs)
+                        data = pre_call.args[0]
+                        weight = pre_call.args[1]
+                        bias = pre_call.args[2]
+
+                        weight_val = weight.data.asnumpy()
+                        bias_val = bias.data.asnumpy()
+                        mul_rhs_val = op_args[1].data.asnumpy()
+
+                        if mul_rhs_val.size != weight_val.shape[0]:
+                            new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                            return new_call
+
+                        new_weight_val = fuse_params_mul_after_conv(weight_val, mul_rhs_val)
+                        if len(bias_val.shape) != 0:
+                            new_bias_val = bias_val * mul_rhs_val.reshape(-1)
+                        else:
+                            new_bias_val = bias_val
+
+                        new_conv2d_attrs["q_params"][-1] = call.attrs.q_params[-1]
+                        new_conv2d_attrs["q_params"][2] = get_weight_params(
+                            new_bias_val, _fuse_mul.config
+                        )
+                        update_conv_attrs(new_weight_val, new_conv2d_attrs, _fuse_mul.config)
+
+                        weight.data.copyfrom(new_weight_val)
+                        bias = relay.expr.const(new_bias_val)
+                        new_conv2d_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
+                        new_call = relay.qnn.op.csi_conv2d(data, weight, bias, **new_conv2d_attrs)
+                        return new_call
+
+                new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                return new_call
+
+        return FuseMulAfterConvMutator().visit(func)
+
+
+def fuse_layer(mod, current_config):
     """remove unnecessary layer to speed up module.
 
     Returns
@@ -2078,577 +2747,175 @@ def fuse_layer(mod):
     """
 
     # def wrapped_func(mod, ctx): # pylint: disable=unused-argument
-
-    class FuseBiasMutator(relay.ExprMutator):
-        """Fuse bias class which only valid in NCHW layout"""
-
-        def __init__(self):
-            super(FuseBiasMutator, self).__init__()
-            self.target_ops = [
-                "qnn.csi.conv2d",
-                "qnn.csi.dense",
-                "qnn.csi.deconv2d",
-                "qnn.csi.conv1d",
-            ]
-
-        def get_new_op(self, call, pre_call, op_args):
-            new_attrs = _qnn_attrs(pre_call.attrs)
-            data = pre_call.args[0]
-            weight = pre_call.args[1]
-            bias = op_args[1]
-            new_attrs["q_params"][-1] = call.attrs.q_params[-1]  # output
-            new_attrs["q_params"][2] = call.attrs.q_params[1]  # bias
-            new_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
-            return _get_csi_op(pre_call.op.name)(data, weight, bias, **new_attrs)
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-            pre_call = op_args[0]
-            if call.op.name == "qnn.csi.bias_add":
-                if not isinstance(pre_call, Call):
-                    return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-
-                if pre_call.op.name in self.target_ops:
-                    return self.get_new_op(call, pre_call, op_args)
-
-            elif call.op.name == "qnn.csi.add":
-                if not isinstance(pre_call, Call) or not isinstance(op_args[1], Constant):
-                    return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-                in_name = pre_call.op.name
-                if in_name not in self.target_ops:
-                    return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-
-                bias = op_args[1].data.asnumpy()
-                b_shape = bias.shape
-                in_shape = _infer_shape(pre_call)
-                need_broadcast = False
-                b_rank = len(b_shape)
-                if b_rank == 1:
-                    b_size = b_shape[0]
-                    need_broadcast = b_shape[0] == 1
-                elif b_rank == 0:
-                    need_broadcast = True
-                else:
-                    return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-
-                if need_broadcast:
-                    if in_name == "qnn.csi.dense":
-                        bias = np.zeros(in_shape[2]) + bias
-                        op_args[1] = relay.const(bias)
-                        return self.get_new_op(call, pre_call, op_args)
-                    else:
-                        bias = np.zeros(in_shape[1]) + bias
-                        op_args[1] = relay.const(bias)
-                        return self.get_new_op(call, pre_call, op_args)
-                else:
-                    if in_name == "qnn.csi.dense":
-                        if b_size == in_shape[-1]:
-                            return self.get_new_op(call, pre_call, op_args)
-                    else:
-                        if b_size == in_shape[1]:
-                            return self.get_new_op(call, pre_call, op_args)
-
-            return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-
-    class FuseConvReluMutator(relay.ExprMutator):
-        """Fuse relu layer helper class"""
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-
-            if call.op.name == "qnn.csi.relu":
-                pre_call = op_args[0]
-                if isinstance(pre_call, Call) and pre_call.op.name == "qnn.csi.conv2d":
-                    new_attrs = _qnn_attrs(pre_call.attrs)
-                    data = pre_call.args[0]
-                    weight = pre_call.args[1]
-                    bias = pre_call.args[2]
-                    new_attrs["q_params"][-1] = call.attrs.q_params[-1]
-                    new_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
-                    new_call = relay.qnn.op.csi_conv2d_relu(data, weight, bias, **new_attrs)
-                    return new_call
-
-            # elif pre_call.op.name == "qnn.csi.dense":
-            #     data = pre_call.args[0]
-            #     weight = pre_call.args[1]
-            #     bias = pre_call.op_args[2]
-            #     new_attrs['axis'] = 0
-            #     new_attrs['output_scale'] = call.attrs.output_scale
-            #     new_attrs['output_zero_point'] = call.attrs.output_zero_point
-            #     new_call = relay.qnn.op.csi_dense(data, weight, bias, **new_attrs)
-            # elif pre_call.op.name == "qnn.csi.deconv2d":
-            #     data = pre_call.args[0]
-            #     weight = pre_call.args[1]
-            #     bias = pre_call.op_args[2]
-            #     new_attrs['output_scale'] = call.attrs.output_scale
-            #     new_attrs['output_zero_point'] = call.attrs.output_zero_point
-            #     new_call = relay.qnn.op.csi_deconv2d(data, weight, bias, **new_attrs)
-            elif call.op.name == "qnn.csi.relu6":
-                pre_call = op_args[0]
-                if pre_call.op.name == "qnn.csi.conv2d":
-                    new_attrs = _qnn_attrs(pre_call.attrs)
-                    data = pre_call.args[0]
-                    weight = pre_call.args[1]
-                    bias = pre_call.args[2]
-                    new_attrs["q_params"][-1] = call.attrs.q_params[-1]
-                    new_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
-                    new_call = relay.qnn.op.csi_conv2d_relu6(data, weight, bias, **new_attrs)
-                    return new_call
-
-            new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-
-            return new_call
-
-    class FusePadMutator(relay.ExprMutator):
-        """Fuse pad layer helper class"""
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-
-            if call.op.name == "qnn.csi.conv2d":
-                pre_call = op_args[0]
-                if not pre_call or isinstance(pre_call, tvm.relay.expr.Var):
-                    new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-                    return new_call
-
-                if isinstance(pre_call, Call) and pre_call.op.name == "qnn.csi.pad":
-                    if not pre_call.attrs.pad_mode == "constant":
-                        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-                        return new_call
-
-                    new_attrs = _qnn_attrs(call.attrs)
-                    data = pre_call.args[0]
-                    weight = op_args[1]
-                    bias = op_args[2]
-
-                    new_attrs["q_params"][0] = pre_call.attrs.q_params[0]
-
-                    pad_len = len(call.attrs.padding)
-                    if pad_len == 4:
-                        new_attrs["padding"] = [
-                            pre_call.attrs.pad_width[2][0],
-                            pre_call.attrs.pad_width[2][1],
-                            pre_call.attrs.pad_width[3][0],
-                            pre_call.attrs.pad_width[3][1],
-                        ]
-                    elif pad_len == 2:
-                        new_attrs["padding"] = [
-                            pre_call.attrs.pad_width[2][0],
-                            pre_call.attrs.pad_width[3][0],
-                        ]
-                    else:
-                        raise ValueError("Unsupport padding size:", pad_len)
-                    new_attrs["layer_name"] += "_fuse_" + pre_call.attrs.layer_name
-                    new_call = relay.qnn.op.csi_conv2d(data, weight, bias, **new_attrs)
-                else:
-                    new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            else:
-                new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            return new_call
-
-    class FuseReshapeDenseMutator(relay.ExprMutator):
-        """Fuse reshape helper class"""
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-
-            if call.op.name == "qnn.csi.dense":
-                pre_call = op_args[0]
-                new_attrs = _qnn_attrs(call.attrs)
-                if isinstance(pre_call, Call) and pre_call.op.name == "qnn.csi.reshape":
-                    data = pre_call.args[0]
-                    if isinstance(data, Var):
-                        return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-                    weight = call.args[1]
-                    bias = call.args[2]
-                    new_attrs["layer_name"] += "_fuse_" + pre_call.attrs.layer_name
-                    return relay.qnn.op.csi_dense(data, weight, bias, **new_attrs)
-
-            return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-
-    class FuseReshapeMutator(relay.ExprMutator):
-        """Fuse reshape helper class"""
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-
-            if call.op.name == "qnn.csi.reshape":
-                pre_call = op_args[0]
-                in_shape = _infer_shape(pre_call)
-                curt_shape = _infer_shape(call)
-                if isinstance(pre_call, Call) and pre_call.op.name == "qnn.csi.reshape":
-                    pre_attrs = _qnn_attrs(pre_call.attrs)
-                    crt_attrs = _qnn_attrs(call.attrs)
-                    crt_attrs["newshape"] = curt_shape
-                    crt_attrs["q_params"][0] = pre_attrs["q_params"][0]
-                    crt_attrs["layer_name"] += "_fuse_" + pre_attrs["layer_name"]
-                    return relay.qnn.op.csi_reshape(pre_call.args[0], **crt_attrs)
-                elif in_shape == curt_shape:
-                    return pre_call
-            return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-
-    class FuseClipMutator(relay.ExprMutator):
-        """Fuse clip helper class"""
-
-        def __init__(self):
-            super(FuseClipMutator, self).__init__()
-            self.changed_layer = {}
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-            current_attrs = _qnn_attrs(call.attrs)
-            if call.op.name in ["qnn.csi.clip", "qnn.csi.relu6"]:
-                pre_call = op_args[0]
-                if isinstance(pre_call, Call):
-                    pre_attrs = _qnn_attrs(pre_call.attrs)
-                    pre_attrs["q_params"][-1] = current_attrs["q_params"][-1]
-                    pre_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
-                    new_call = _get_csi_op(pre_call.op.name)(*pre_call.args, **pre_attrs)
-                    self.changed_layer[hash(new_call)] = pre_attrs["q_params"][-1]
-                else:
-                    new_call = _get_csi_op(call.op.name)(*op_args, **current_attrs)
-            else:
-                for idx, arg in enumerate(op_args):
-                    hash_arg = hash(arg)
-                    if hash_arg in self.changed_layer:
-                        current_attrs["q_params"][idx] = self.changed_layer[hash_arg]
-                new_call = _get_csi_op(call.op.name)(*op_args, **current_attrs)
-            return new_call
-
-    class FuseReluMutator(relay.ExprMutator):
-        """Fuse relu helper class"""
-
-        def __init__(self):
-            super(FuseReluMutator, self).__init__()
-            self.changed_layer = {}
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-            current_attrs = _qnn_attrs(call.attrs)
-            if call.op.name == "qnn.csi.relu":
-                pre_call = op_args[0]
-                if isinstance(pre_call, Call):
-                    pre_attrs = _qnn_attrs(pre_call.attrs)
-                    pre_attrs["q_params"][-1] = current_attrs["q_params"][-1]
-                    pre_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
-                    new_call = _get_csi_op(pre_call.op.name)(*pre_call.args, **pre_attrs)
-                    self.changed_layer[hash(new_call)] = pre_attrs["q_params"][-1]
-                else:
-                    new_call = _get_csi_op(call.op.name)(*op_args, **current_attrs)
-            else:
-                for idx, arg in enumerate(op_args):
-                    hash_arg = hash(arg)
-                    if hash_arg in self.changed_layer:
-                        current_attrs["q_params"][idx] = self.changed_layer[hash_arg]
-                new_call = _get_csi_op(call.op.name)(*op_args, **current_attrs)
-            return new_call
-
-    def fuse_params_add_mul_before_conv(weight, bias, mul_val, add_val):
-        """update the params in convolution op while add or/and mul op in front of it."""
-        assert len(weight.shape) == 4
-        new_weight = weight * mul_val
-        new_bias = weight * add_val
-        new_bias = np.sum(new_bias, (1, 2, 3))
-        new_bias = new_bias + bias
-
-        return new_weight.astype(np.float32), new_bias.reshape(-1).astype(np.float32)
-
-    def update_conv_attrs(weight_val, attrs):
-        """update the attrubutions for conv2d op with new weight value."""
-        min_max_val = get_weight_params(weight_val)
-
-        attrs["q_params"][1] = min_max_val
-
-    class FuseAddBeforeConv(relay.ExprMutator):
-        """Fuse add op in front of the convolution op."""
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-
-            if call.op.name == "qnn.csi.conv2d":
-                new_conv2d_attrs = _qnn_attrs(call.attrs)
-                pre_call = op_args[0]
-                if (
-                    isinstance(pre_call, Call)
-                    and (pre_call.op.name in ("qnn.csi.add", "qnn.csi.bias_add"))
-                    and isinstance(pre_call.args[1], Constant)
-                    and sum(new_conv2d_attrs["padding"]) == 0
-                ):
-                    data = pre_call.args[0]
-                    weight = op_args[1]
-                    bias = op_args[2]
-
-                    weight_val = weight.data.asnumpy()
-                    bias_val = bias.data.asnumpy()
-                    add_rhs_val = pre_call.args[1].data.asnumpy()
-
-                    if len(bias_val.shape) == 0:
-                        bias_val = np.zeros(weight_val.shape[0])
-                    if len(add_rhs_val.shape) == 1:
-                        add_rhs_val = np.reshape(add_rhs_val, (1, add_rhs_val.shape[0], 1, 1))
-
-                    if add_rhs_val.size != weight_val.shape[1] or new_conv2d_attrs["groups"] > 1:
-                        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-                        return new_call
-
-                    mul_rhs_val = np.ones_like(add_rhs_val)
-
-                    new_weight_val, new_bias_val = fuse_params_add_mul_before_conv(
-                        weight_val, bias_val, mul_rhs_val, add_rhs_val
-                    )
-
-                    new_conv2d_attrs["q_params"][0] = pre_call.attrs.q_params[0]
-                    update_conv_attrs(new_weight_val, new_conv2d_attrs)
-
-                    weight.data.copyfrom(new_weight_val)
-                    bias = relay.expr.const(new_bias_val)
-
-                    new_call = relay.qnn.op.csi_conv2d(data, weight, bias, **new_conv2d_attrs)
-                    return new_call
-                else:
-                    new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            else:
-                new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            return new_call
-
-    class FuseMulBeforeConv(relay.ExprMutator):
-        """Fuse mul op in front of the convolution op."""
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-
-            if call.op.name == "qnn.csi.conv2d":
-                new_conv2d_attrs = _qnn_attrs(call.attrs)
-                pre_call = op_args[0]
-                if (
-                    isinstance(pre_call, Call)
-                    and pre_call.op.name == "qnn.csi.mul"
-                    and isinstance(pre_call.args[1], Constant)
-                ):
-                    data = pre_call.args[0]
-                    weight = op_args[1]
-                    bias = op_args[2]
-
-                    weight_val = weight.data.asnumpy()
-                    bias_val = bias.data.asnumpy()
-                    mul_rhs_val = pre_call.args[1].data.asnumpy()
-
-                    if len(bias_val.shape) == 0:
-                        bias_val = np.zeros(weight_val.shape[0])
-                    if len(mul_rhs_val.shape) in [0, 1]:
-                        if len(mul_rhs_val.shape) == 1:
-                            mul_rhs_val = mul_rhs_val[0]
-                        mul_rhs_val = np.full((1, weight_val.shape[1], 1, 1), mul_rhs_val)
-                    if mul_rhs_val.size != mul_rhs_val.shape[1] or new_conv2d_attrs["groups"] > 1:
-                        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-                        return new_call
-
-                    add_rhs_val = np.zeros_like(mul_rhs_val)
-
-                    new_weight_val, new_bias_val = fuse_params_add_mul_before_conv(
-                        weight_val, bias_val, mul_rhs_val, add_rhs_val
-                    )
-
-                    new_conv2d_attrs["q_params"][0] = pre_call.attrs.q_params[0]
-
-                    update_conv_attrs(new_weight_val, new_conv2d_attrs)
-
-                    weight.data.copyfrom(new_weight_val)
-                    bias = relay.expr.const(new_bias_val)
-                    new_conv2d_attrs["layer_name"] += "_fuse_" + pre_call.attrs.layer_name
-                    new_call = relay.qnn.op.csi_conv2d(data, weight, bias, **new_conv2d_attrs)
-                    return new_call
-                else:
-                    new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            else:
-                new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            return new_call
-
-    def fuse_params_mul_after_conv(weight, mul_val):
-        """update the params in convolution op while mul op in behind it."""
-        assert len(weight.shape) == 4
-        mul_val = np.reshape(mul_val, (-1, 1, 1, 1))
-        new_weight = weight * mul_val
-        return new_weight.astype(np.float32)
-
-    class FuseAddAfterConv(relay.ExprMutator):
-        """Fuse add op in behind the convolution op."""
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-            if call.op.name in ("qnn.csi.add", "qnn.csi.bias_add") and isinstance(
-                op_args[1], Constant
-            ):
-                pre_call = op_args[0]
-                if not isinstance(pre_call, Call):
-                    return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-                if pre_call.op.name == "qnn.csi.conv2d":
-                    new_conv2d_attrs = _qnn_attrs(pre_call.attrs)
-                    data = pre_call.args[0]
-                    weight = pre_call.args[1]
-                    bias = pre_call.args[2]
-
-                    weight_val = weight.data.asnumpy()
-                    bias_val = bias.data.asnumpy()
-                    add_rhs_val = op_args[1].data.asnumpy()
-
-                    if add_rhs_val.size != weight_val.shape[0]:
-                        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-                        return new_call
-
-                    if len(bias_val.shape) == 0:
-                        bias_val = np.zeros(weight_val.shape[0])
-
-                    new_bias_val = add_rhs_val.reshape(-1) + bias_val
-                    new_conv2d_attrs["q_params"][-1] = call.attrs.q_params[-1]
-                    new_conv2d_attrs["q_params"][2] = get_weight_params(new_bias_val)
-                    bias = relay.expr.const(new_bias_val)
-                    new_conv2d_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
-                    new_call = relay.qnn.op.csi_conv2d(data, weight, bias, **new_conv2d_attrs)
-                    return new_call
-                elif pre_call.op.name == "qnn.csi.dense":
-                    new_dense_attrs = _qnn_attrs(pre_call.attrs)
-                    data = pre_call.args[0]
-                    weight = pre_call.args[1]
-                    bias = pre_call.args[2]
-
-                    weight_val = weight.data.asnumpy()
-                    bias_val = bias.data.asnumpy()
-                    add_rhs_val = op_args[1].data.asnumpy()
-
-                    if add_rhs_val.size != weight_val.shape[0]:
-                        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-                        return new_call
-
-                    if len(bias_val.shape) == 0:
-                        bias_val = np.zeros(weight_val.shape[0])
-
-                    new_bias_val = add_rhs_val.reshape(bias_val.shape) + bias_val
-
-                    new_dense_attrs["q_params"][-1] = call.attrs.q_params[-1]
-
-                    new_dense_attrs["q_params"][2] = get_weight_params(new_bias_val)
-                    bias = relay.expr.const(new_bias_val)
-                    new_dense_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
-                    new_call = relay.qnn.op.csi_dense(data, weight, bias, **new_dense_attrs)
-                    return new_call
-                else:
-                    if call.op.name == "qnn.csi.bias_add":
-                        lhs_shape = _infer_shape(pre_call)
-                        rhs_shape = op_args[1].checked_type.concrete_shape
-                        if len(lhs_shape) == 4 and len(rhs_shape) == 1:
-                            newshape = (1, -1, 1, 1)
-                            rhs_data = op_args[1].data.asnumpy()
-                            rhs_data = np.reshape(rhs_data, newshape)
-                            rhs = relay.expr.const(rhs_data)
-
-                            new_attrs = _qnn_attrs(call.attrs)
-                            new_call = relay.qnn.op.csi_add(pre_call, rhs, **new_attrs)
-                            return new_call
-            new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            return new_call
-
-    class FuseMulAfterConv(relay.ExprMutator):
-        """Fuse mul op in behind the convolution op."""
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-            if call.op.name == "qnn.csi.mul" and isinstance(op_args[1], Constant):
-                pre_call = op_args[0]
-                if isinstance(pre_call, Call) and pre_call.op.name == "qnn.csi.conv2d":
-                    new_conv2d_attrs = _qnn_attrs(pre_call.attrs)
-                    data = pre_call.args[0]
-                    weight = pre_call.args[1]
-                    bias = pre_call.args[2]
-
-                    weight_val = weight.data.asnumpy()
-                    bias_val = bias.data.asnumpy()
-                    mul_rhs_val = op_args[1].data.asnumpy()
-
-                    if mul_rhs_val.size != weight_val.shape[0]:
-                        new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-                        return new_call
-
-                    new_weight_val = fuse_params_mul_after_conv(weight_val, mul_rhs_val)
-                    if len(bias_val.shape) != 0:
-                        new_bias_val = bias_val * mul_rhs_val.reshape(-1)
-                    else:
-                        new_bias_val = bias_val
-
-                    new_conv2d_attrs["q_params"][-1] = call.attrs.q_params[-1]
-                    new_conv2d_attrs["q_params"][2] = get_weight_params(new_bias_val)
-                    update_conv_attrs(new_weight_val, new_conv2d_attrs)
-
-                    weight.data.copyfrom(new_weight_val)
-                    bias = relay.expr.const(new_bias_val)
-                    new_conv2d_attrs["layer_name"] += "_fuse_" + call.attrs.layer_name
-                    new_call = relay.qnn.op.csi_conv2d(data, weight, bias, **new_conv2d_attrs)
-                    return new_call
-
-            new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            return new_call
-
     fuse_pass_sequential = [
-        {FuseReshapeMutator: "default"},
-        {FusePadMutator: "default"},
-        {FuseBiasMutator: "fuse_add_after_conv"},
+        {FuseReshape: "default"},
+        {FusePad: "default"},
+        {FuseBias: "fuse_add_after_conv"},
         {FuseMulAfterConv: "fuse_mul_after_conv"},
         {FuseAddAfterConv: "fuse_add_after_conv"},
         # {FuseAddBeforeConv: "fuse_add_before_conv"},
         {FuseMulBeforeConv: "fuse_mul_before_conv"},
-        {FuseClipMutator: "fuse_clip"},
-        {FuseReluMutator: "fuse_relu"},
-        {FuseConvReluMutator: "fuse_conv_relu"},
-        {FuseReshapeDenseMutator: "fuse_reshape_dense"},
+        {FuseClip: "fuse_clip"},
+        {FuseRelu: "fuse_relu"},
+        {FuseConvRelu: "fuse_conv_relu"},
+        {FuseReshapeDense: "fuse_reshape_dense"},
     ]
-    dict_config = {}
-    current_config = current_csinn_config()
-    for attr in dir(current_config):
-        if "__" not in attr:
-            dict_config[attr] = getattr(current_config, attr)
 
     for mutator_map in fuse_pass_sequential:
         mutator = list(mutator_map.keys())[0]
         csinn_config = mutator_map[mutator]
-        if csinn_config == "default":
-            mod["main"] = mutator().visit(mod["main"])
-        elif dict_config[csinn_config]:
-            mod["main"] = mutator().visit(mod["main"])
+        if (
+            csinn_config in ["fuse_mul_before_conv", "fuse_mul_after_conv"]
+            and current_config[csinn_config]
+        ):
+            mod = transform.Sequential([mutator(current_config)])(mod)
+        elif csinn_config == "fuse_add_after_conv" and current_config[csinn_config]:
+            mod = transform.Sequential([FuseBias()])(mod)
+            mod = transform.Sequential([FuseAddAfterConv(current_config)])(mod)
+        elif csinn_config == "default" or current_config[csinn_config]:
+            mod = transform.Sequential([mutator()])(mod)
 
     return mod
 
 
+@function_pass(opt_level=1)
+class OptimizeShapeCheck:
+    """Optimize shape check layer"""
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+
+        class OptimizeShapeCheckMutator(relay.ExprMutator):
+            """optimize shape"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+
+                if call.op.name in [
+                    "qnn.csi.add",
+                    "qnn.csi.mul",
+                    "qnn.csi.subtract",
+                    "qnn.csi.div",
+                    "qnn.csi.power",
+                    "qnn.csi.minimum",
+                    "qnn.csi.maximum",
+                ]:
+                    if isinstance(op_args[1], Constant) and len(_infer_shape(op_args[1])) == 0:
+                        dtype = (
+                            op_args[1]._checked_type_.dtype
+                            if op_args[1]._checked_type_
+                            else "float32"
+                        )
+                        value = op_args[1].data.asnumpy().tolist()
+                        op_args[1] = const(np.array([value]).astype(dtype), dtype)
+                new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
+                return new_call
+
+            def visit_function(self, fn):
+                new_params = [self.visit(x) for x in fn.params]
+                new_body = self.visit(fn.body)
+                return function.Function(list(new_params), new_body)
+
+        return OptimizeShapeCheckMutator().visit(func)
+
+
+@function_pass(opt_level=1)
+class UpdataQparams:
+    """update attr for layers"""
+
+    def __init__(self, indexd_graph):
+        self.indexd_graph = indexd_graph
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        updata_qparams = self
+
+        class UpdataQparamsMutator(relay.ExprMutator):
+            """_summary_
+
+            Args:
+                relay (_type_): _description_
+            """
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                node_name = hash(call)
+                if node_name in updata_qparams.indexd_graph:
+                    attrs = updata_qparams.indexd_graph[node_name].attr
+                else:
+                    attrs = _qnn_attrs(call.attrs)
+                new_call = _get_csi_op(call.op.name)(*op_args, **attrs)
+                return new_call
+
+        return UpdataQparamsMutator().visit(func)
+
+
+@function_pass(opt_level=1)
+class InsertAddBeforeConcat:
+    """Optimize concat layer"""
+
+    def __init__(self, op_list):
+        self.insert_list = ["qnn.csi." + op for op in op_list]
+        self.concat_input = []
+
+    def insert_add(self, inputs, q_params):
+        """insert op"""
+
+        in_shape = _infer_shape(inputs)
+        zeros = np.ones(in_shape, np.float32)
+        zeros = relay.expr.const(zeros, dtype="float32")
+        add_q = [1, 0, 1, 1.0, 1.0]
+        new_q_params = [q_params[-1], add_q, q_params[-1]]
+        return relay.qnn.op.csi_mul(inputs, zeros, new_q_params)
+
+    def transform_function(self, func, mod, ctx):
+        """patten and convert op"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+        insert_add_ = self
+
+        class InsertAddBeforeConcatMutator(relay.ExprMutator):
+            """_summary_
+
+            Args:
+                relay (_type_): _description_
+            """
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                current_attrs = _qnn_attrs(call.attrs)
+                if call.op.name == "qnn.csi.concatenate":
+                    new_tuple_args = [[] for _ in op_args[0]]
+                    for idx, pre_call in enumerate(op_args[0]):
+                        new_tuple_args[idx] = op_args[0][idx]
+                        if isinstance(pre_call, Call):
+                            if pre_call.op.name in insert_add_.insert_list:
+                                pre_attrs = _qnn_attrs(pre_call.attrs)
+                                new_pre_call = insert_add_.insert_add(
+                                    pre_call, pre_attrs["q_params"]
+                                )
+                                new_tuple_args[idx] = new_pre_call
+                            elif pre_call in insert_add_.concat_input:
+                                pre_attrs = _qnn_attrs(pre_call.attrs)
+                                new_pre_call = insert_add_.insert_add(
+                                    pre_call, pre_attrs["q_params"]
+                                )
+                                new_tuple_args[idx] = new_pre_call
+                            insert_add_.concat_input.append(pre_call)
+
+                    new_current_call = relay.qnn.op.csi_concatenate(
+                        Tuple(new_tuple_args), **current_attrs
+                    )
+                    return new_current_call
+
+                return Call(call.op, op_args, call.attrs, call.type_args, call.span)
+
+        return InsertAddBeforeConcatMutator().visit(func)
+
+
 def optimize_quantization(mod, broadcast_quantization=False, target=""):
     """Optimize quantization for th1520"""
-
-    class OptimizeShapeCheck(relay.ExprMutator):
-        """Optimize shape check layer"""
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-
-            if call.op.name in [
-                "qnn.csi.add",
-                "qnn.csi.mul",
-                "qnn.csi.subtract",
-                "qnn.csi.div",
-                "qnn.csi.power",
-                "qnn.csi.minimum",
-                "qnn.csi.maximum",
-            ]:
-                if isinstance(op_args[1], Constant) and len(_infer_shape(op_args[1])) == 0:
-                    dtype = (
-                        op_args[1]._checked_type_.dtype if op_args[1]._checked_type_ else "float32"
-                    )
-                    value = op_args[1].data.asnumpy().tolist()
-                    op_args[1] = const(np.array([value]).astype(dtype), dtype)
-            new_call = Call(call.op, op_args, call.attrs, call.type_args, call.span)
-            return new_call
-
-        def visit_function(self, fn):
-            new_params = [self.visit(x) for x in fn.params]
-            new_body = self.visit(fn.body)
-            return function.Function(list(new_params), new_body)
 
     class Node:
         """Indexed node"""
@@ -2998,67 +3265,7 @@ def optimize_quantization(mod, broadcast_quantization=False, target=""):
             else:
                 self.cpu_qinfo_mutator(in2out_list, out2in_list)
 
-    class UpdataQparams(relay.ExprMutator):
-        """update attr for layers"""
-
-        def __init__(self, indexd_graph):
-            super(UpdataQparams, self).__init__()
-            self.indexd_graph = indexd_graph
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-            node_name = hash(call)
-            if node_name in self.indexd_graph:
-                attrs = self.indexd_graph[node_name].attr
-            else:
-                attrs = _qnn_attrs(call.attrs)
-            new_call = _get_csi_op(call.op.name)(*op_args, **attrs)
-            return new_call
-
-    class InsertAddBeforeConcat(relay.ExprMutator):
-        """Optimize concat layer"""
-
-        def __init__(self, op_list):
-            super(InsertAddBeforeConcat, self).__init__()
-            self.insert_list = ["qnn.csi." + op for op in op_list]
-            self.concat_input = []
-
-        def insert_add(self, inputs, q_params):
-            """insert op"""
-
-            in_shape = _infer_shape(inputs)
-            zeros = np.ones(in_shape, np.float32)
-            zeros = relay.expr.const(zeros, dtype="float32")
-            add_q = [1, 0, 1, 1.0, 1.0]
-            new_q_params = [q_params[-1], add_q, q_params[-1]]
-            return relay.qnn.op.csi_mul(inputs, zeros, new_q_params)
-
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-            current_attrs = _qnn_attrs(call.attrs)
-            if call.op.name == "qnn.csi.concatenate":
-                new_tuple_args = [[] for _ in op_args[0]]
-                for idx, pre_call in enumerate(op_args[0]):
-                    new_tuple_args[idx] = op_args[0][idx]
-                    if isinstance(pre_call, Call):
-                        if pre_call.op.name in self.insert_list:
-                            pre_attrs = _qnn_attrs(pre_call.attrs)
-                            new_pre_call = self.insert_add(pre_call, pre_attrs["q_params"])
-                            new_tuple_args[idx] = new_pre_call
-                        elif pre_call in self.concat_input:
-                            pre_attrs = _qnn_attrs(pre_call.attrs)
-                            new_pre_call = self.insert_add(pre_call, pre_attrs["q_params"])
-                            new_tuple_args[idx] = new_pre_call
-                        self.concat_input.append(pre_call)
-
-                new_current_call = relay.qnn.op.csi_concatenate(
-                    Tuple(new_tuple_args), **current_attrs
-                )
-                return new_current_call
-
-            return Call(call.op, op_args, call.attrs, call.type_args, call.span)
-
-    mod["main"] = OptimizeShapeCheck().visit(mod["main"])
+    mod = transform.Sequential([OptimizeShapeCheck()])(mod)
     if broadcast_quantization:
         if target in ["th1520", "hth1520"]:
             out2in_list = ["concatenate"]
@@ -3075,13 +3282,13 @@ def optimize_quantization(mod, broadcast_quantization=False, target=""):
                 "global_maxpool2d",
                 "strided_slice",
             ]
-            mod["main"] = InsertAddBeforeConcat(out2in_list + in2out_list).visit(mod["main"])
+            mod = transform.Sequential([InsertAddBeforeConcat(out2in_list + in2out_list)])(mod)
         else:
             out2in_list = []
             in2out_list = ["transpose", "reshape", "upsampling", "maxpool2d", "strided_slice"]
         index_graph_creater = CreateIndexedGraph(mod, target)
         index_graph_creater.qinfo_exchange(in2out_list, out2in_list, target)
-        mod["main"] = UpdataQparams(index_graph_creater.get_graph()).visit(mod["main"])
+        mod = transform.Sequential([UpdataQparams(index_graph_creater.get_graph())])(mod)
 
     return mod
 
@@ -3115,125 +3322,154 @@ def rename_call(mod, call_count):
     return mod
 
 
-def unify_quant_params(mod):
-    """unify quant params for valid node."""
+def is_valid(param):
+    """param = [1, 1, 0, scale, zp], if scale==0 and zp==0
+    this param is not initialized or valid.
+    """
+    res = False
+    if tuple(param[-2:]) != (0, 0):
+        res = True
+    return res
 
-    def is_valid(param):
-        """param = [1, 1, 0, scale, zp], if scale==0 and zp==0
-        this param is not initialized or valid.
-        """
-        res = False
-        if tuple(param[-2:]) != (0, 0):
-            res = True
-        return res
 
-    class CurrentInputAndPreOutput(relay.ExprMutator):
-        """Ensure the input's quant params of current op is the same with
-        the output's quant params of previous op.
-        """
+@function_pass(opt_level=1)
+class CurrentInputAndPreOutput:
+    """Ensure the input's quant params of current op is the same with
+    the output's quant params of previous op.
+    """
 
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-            new_op_attrs = _qnn_attrs(call.attrs)
+    def transform_funciton(self, func, mod, ctx):
+        """_summary_"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
 
-            for i, arg in enumerate(op_args):
-                if isinstance(arg, Call):
-                    arg_attrs = _qnn_attrs(arg.attrs)
+        class CurrentInputAndPreOutputMutator(relay.ExprMutator):
+            """_summary_
 
-                    if is_valid(arg_attrs["q_params"][-1]):
-                        new_op_attrs["q_params"][i] = arg_attrs["q_params"][-1]
-                    elif is_valid(new_op_attrs["q_params"][i]):
-                        arg_attrs["q_params"][-1] = new_op_attrs["q_params"][i]
-                        op_args[i] = csi_op().all_handle[arg.op.name](*(arg.args), **arg_attrs)
-                # (Fixme@chenf): TupleGetItem and Tuple node's params should be fixed.
-                elif isinstance(arg, TupleGetItem):
-                    arg_attrs = _qnn_attrs(arg.tuple_value.attrs)
+            Args:
+                relay (_type_): _description_
+            """
 
-                    in_num = len(arg.tuple_value.args)
-                    if tuple(arg_attrs["q_params"][in_num + arg.index][-2:]) != (0, 0):
-                        new_op_attrs["q_params"][i] = arg_attrs["q_params"][in_num + arg.index]
-                elif isinstance(arg, Tuple):
-                    for j in range(len(arg)):
-                        curr_node = arg.field[j]
-                        if isinstance(curr_node, Call):
-                            curr_attrs = _qnn_attrs(curr_node.attrs)
-                            if tuple(curr_attrs["q_params"][-1][-2:]) != (0, 0):
-                                new_op_attrs["q_params"][j] = curr_attrs["q_params"][-1]
-                        elif isinstance(curr_node, TupleGetItem):
-                            curr_attrs = _qnn_attrs(curr_node.attrs)
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                new_op_attrs = _qnn_attrs(call.attrs)
 
-                            in_num = len(arg.tuple_value.args)
-                            if tuple(curr_attrs["q_params"][in_num + curr_node.index][-2:]) != (
-                                0,
-                                0,
-                            ):
-                                new_op_attrs["q_params"][j] = curr_attrs["q_params"][
-                                    in_num + curr_node.index
-                                ]
-            return csi_op().all_handle[call.op.name](*op_args, **new_op_attrs)
+                for i, arg in enumerate(op_args):
+                    if isinstance(arg, Call):
+                        arg_attrs = _qnn_attrs(arg.attrs)
 
-    class CurrentInputAndCurrentOutput(relay.ExprMutator):
-        """Ensure the input's quant params of current op is the same with
-        the output's quant params of current op."""
+                        if is_valid(arg_attrs["q_params"][-1]):
+                            new_op_attrs["q_params"][i] = arg_attrs["q_params"][-1]
+                        elif is_valid(new_op_attrs["q_params"][i]):
+                            arg_attrs["q_params"][-1] = new_op_attrs["q_params"][i]
+                            op_args[i] = csi_op().all_handle[arg.op.name](*(arg.args), **arg_attrs)
+                    # (Fixme@chenf): TupleGetItem and Tuple node's params should be fixed.
+                    elif isinstance(arg, TupleGetItem):
+                        arg_attrs = _qnn_attrs(arg.tuple_value.attrs)
 
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-            new_op_attrs = _qnn_attrs(call.attrs)
+                        in_num = len(arg.tuple_value.args)
+                        if tuple(arg_attrs["q_params"][in_num + arg.index][-2:]) != (0, 0):
+                            new_op_attrs["q_params"][i] = arg_attrs["q_params"][in_num + arg.index]
+                    elif isinstance(arg, Tuple):
+                        for j in range(len(arg)):
+                            curr_node = arg.field[j]
+                            if isinstance(curr_node, Call):
+                                curr_attrs = _qnn_attrs(curr_node.attrs)
+                                if tuple(curr_attrs["q_params"][-1][-2:]) != (0, 0):
+                                    new_op_attrs["q_params"][j] = curr_attrs["q_params"][-1]
+                            elif isinstance(curr_node, TupleGetItem):
+                                curr_attrs = _qnn_attrs(curr_node.attrs)
 
-            out2in_list = [
-                "qnn.csi.reshape",
-                "qnn.csi.upsampling",
-                "qnn.csi.transpose",
-                "qnn.csi.mean",
-                "qnn.csi.relu",
-                "qnn.csi.relu6",
-                "qnn.csi.avgpool2d",
-                "qnn.csi.maxpool2d",
-                "qnn.csi.global_avgpool2d",
-                "qnn.csi.global_maxpool2d",
-                "qnn.csi.strided_slice",
-            ]
+                                in_num = len(arg.tuple_value.args)
+                                if tuple(curr_attrs["q_params"][in_num + curr_node.index][-2:]) != (
+                                    0,
+                                    0,
+                                ):
+                                    new_op_attrs["q_params"][j] = curr_attrs["q_params"][
+                                        in_num + curr_node.index
+                                    ]
+                return csi_op().all_handle[call.op.name](*op_args, **new_op_attrs)
 
-            if call.op.name in out2in_list:
-                if (
-                    is_valid(new_op_attrs["q_params"][-1])
-                    and is_valid(new_op_attrs["q_params"][0])
-                    and tuple(new_op_attrs["q_params"][-1][-2:])
-                    != tuple(new_op_attrs["q_params"][0][-2:])
-                ):
-                    logger.warning(
-                        "%s:%s has different quant info for input:%s/output:%s"
-                        % (
-                            call.op.name,
-                            new_op_attrs["layer_name"],
-                            tuple(new_op_attrs["q_params"][0][-2:]),
-                            tuple(new_op_attrs["q_params"][-1][-2:]),
+        return CurrentInputAndPreOutputMutator().visit(func)
+
+
+@function_pass(opt_level=1)
+class CurrentInputAndCurrentOutput:
+    """Ensure the input's quant params of current op is the same with
+    the output's quant params of current op."""
+
+    def transform_funciton(self, func, mod, ctx):
+        """_summary_"""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+
+        class CurrentInputAndCurrentOutputMutator(relay.ExprMutator):
+            """_summary_
+
+            Args:
+                relay (_type_): _description_
+            """
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                new_op_attrs = _qnn_attrs(call.attrs)
+
+                out2in_list = [
+                    "qnn.csi.reshape",
+                    "qnn.csi.upsampling",
+                    "qnn.csi.transpose",
+                    "qnn.csi.mean",
+                    "qnn.csi.relu",
+                    "qnn.csi.relu6",
+                    "qnn.csi.avgpool2d",
+                    "qnn.csi.maxpool2d",
+                    "qnn.csi.global_avgpool2d",
+                    "qnn.csi.global_maxpool2d",
+                    "qnn.csi.strided_slice",
+                ]
+
+                if call.op.name in out2in_list:
+                    if (
+                        is_valid(new_op_attrs["q_params"][-1])
+                        and is_valid(new_op_attrs["q_params"][0])
+                        and tuple(new_op_attrs["q_params"][-1][-2:])
+                        != tuple(new_op_attrs["q_params"][0][-2:])
+                    ):
+                        logger.warning(
+                            "%s:%s has different quant info for input:%s/output:%s"
+                            % (
+                                call.op.name,
+                                new_op_attrs["layer_name"],
+                                tuple(new_op_attrs["q_params"][0][-2:]),
+                                tuple(new_op_attrs["q_params"][-1][-2:]),
+                            )
                         )
-                    )
-                if is_valid(new_op_attrs["q_params"][-1]) and (
-                    not is_valid(new_op_attrs["q_params"][0])
-                ):
-                    new_op_attrs["q_params"][0] = new_op_attrs["q_params"][-1]
-                    logger.warning(
-                        "The quant info of output is copied to input in %s:%s"
-                        % (call.op.name, new_op_attrs["layer_name"])
-                    )
-                elif is_valid(new_op_attrs["q_params"][0]) and (
-                    not is_valid(new_op_attrs["q_params"][-1])
-                ):
-                    new_op_attrs["q_params"][-1] = new_op_attrs["q_params"][0]
-                    logger.warning(
-                        "The quant info of input is copied to output in %s:%s"
-                        % (call.op.name, new_op_attrs["layer_name"])
-                    )
+                    if is_valid(new_op_attrs["q_params"][-1]) and (
+                        not is_valid(new_op_attrs["q_params"][0])
+                    ):
+                        new_op_attrs["q_params"][0] = new_op_attrs["q_params"][-1]
+                        logger.warning(
+                            "The quant info of output is copied to input in %s:%s"
+                            % (call.op.name, new_op_attrs["layer_name"])
+                        )
+                    elif is_valid(new_op_attrs["q_params"][0]) and (
+                        not is_valid(new_op_attrs["q_params"][-1])
+                    ):
+                        new_op_attrs["q_params"][-1] = new_op_attrs["q_params"][0]
+                        logger.warning(
+                            "The quant info of input is copied to output in %s:%s"
+                            % (call.op.name, new_op_attrs["layer_name"])
+                        )
 
-            return csi_op().all_handle[call.op.name](*op_args, **new_op_attrs)
+                return csi_op().all_handle[call.op.name](*op_args, **new_op_attrs)
 
+        return CurrentInputAndCurrentOutputMutator().visit(func)
+
+
+def unify_quant_params(mod):
     old_level = logger.getEffectiveLevel()
     logger.setLevel(logging.ERROR)
-    mod["main"] = CurrentInputAndCurrentOutput().visit(mod["main"])
+    mod = transform.Sequential([CurrentInputAndCurrentOutput()])(mod)
     logger.setLevel(old_level)
-    mod["main"] = CurrentInputAndPreOutput().visit(mod["main"])
-    mod["main"] = CurrentInputAndCurrentOutput().visit(mod["main"])
-    mod["main"] = CurrentInputAndPreOutput().visit(mod["main"])
+    mod = transform.Sequential([CurrentInputAndPreOutput()])(mod)
+    mod = transform.Sequential([CurrentInputAndCurrentOutput()])(mod)
+    mod = transform.Sequential([CurrentInputAndPreOutput()])(mod)
     return mod

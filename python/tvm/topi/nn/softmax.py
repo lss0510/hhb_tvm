@@ -149,3 +149,86 @@ def log_softmax(x, axis=-1):
         lambda i, j: x[i, j] - max_elem[i] - te.log(expsum[i]),
         attrs={"axis": axis},
     )
+
+
+@tvm.te.tag_scope(tag="softmax_output")
+def softmax_rvv(x, axis=-1):
+    """Perform softmax activation on the data.
+
+    Parameters
+    ----------
+    data : tvm.te.Tensor
+        can be any dimension
+
+    axis : int
+        channel axis
+
+    Returns
+    -------
+    output : tvm.te.Tensor
+        output shape is the same as input
+    """
+    return softmax_common_rvv(x, axis, False)
+
+
+def softmax_common_rvv(x, axis, use_fast_exp):
+    """The common part of softmax and fast_softmax"""
+    shape = x.shape
+    if axis < 0:
+        axis = len(shape) + axis
+    if axis >= len(shape):
+        ValueError("axis parameter should be less than input dim")
+    k1 = te.reduce_axis((0, shape[axis]), name="k")
+    k2 = te.reduce_axis((0, shape[axis]), name="k")
+
+    def insert_reduce_index(indices, reduce_index):
+        return indices[:axis] + (reduce_index,) + indices[axis:]
+
+    def get_non_reduce_indices(indices):
+        return tuple([var for (i, var) in enumerate(indices) if i != axis])
+
+    def _compute_max(*indices):
+        eval_range = insert_reduce_index(indices, k1)
+        return tvm.te.max(x[eval_range], axis=k1)
+
+    def _compute_delta(max_elem, *indices):
+        non_reduce_indices = get_non_reduce_indices(indices)
+        return x[indices] - max_elem[non_reduce_indices]
+
+    def _compute_sub(max_elem, *indices):
+        non_reduce_indices = get_non_reduce_indices(indices)
+        return x[indices] - max_elem[non_reduce_indices]
+
+    def _compute_exp(sub, *indices):
+        return te.exp(sub[indices])
+
+    def _compute_expsum(exp, *indices):
+        eval_range = insert_reduce_index(indices, k2)
+        return te.sum(exp[eval_range], axis=k2)
+
+    def _normalize(exp, expsum, *indices):
+        non_reduce_indices = get_non_reduce_indices(indices)
+        return exp[indices] / expsum[non_reduce_indices]
+
+    reduced_shape = tuple([dim for (i, dim) in enumerate(shape) if i != axis])
+    max_elem = te.compute(reduced_shape, _compute_max, name="T_softmax_maxelem")
+
+    if use_fast_exp:
+        delta = te.compute(
+            shape, lambda *indices: _compute_delta(max_elem, *indices), name="T_softmax_delta"
+        )
+        exp = topi.math.fast_exp(delta)
+    else:
+        sub = te.compute(
+            shape, lambda *indices: _compute_sub(max_elem, *indices), name="T_softmax_sub"
+        )
+        exp = te.compute(shape, lambda *indices: _compute_exp(sub, *indices), name="T_softmax_exp")
+    expsum = te.compute(
+        reduced_shape, lambda *indices: _compute_expsum(exp, *indices), name="T_softmax_expsum"
+    )
+    return te.compute(
+        shape,
+        lambda *indices: _normalize(exp, expsum, *indices),
+        name="T_softmax_norm",
+        attrs={"axis": axis},
+    )

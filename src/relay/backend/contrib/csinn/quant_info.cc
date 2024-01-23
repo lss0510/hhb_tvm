@@ -168,8 +168,41 @@ void QuantCalculator::GetSymScale(float min_value, float max_value, int bits, Qi
       qinfo->scale = 1.0;
       qinfo->zero_point = 0;
     } else {
+      // do something
+      float high_bound = 65504 * cfg->high_bound_scale;
+      float low_bound = 5.96e-8 * cfg->low_bound_scale;
+      CHECK(high_bound > low_bound) << "Scaled low_bound should be less than scaled hight_bound.";
       qinfo->zero_point = 0;
-      qinfo->scale = 1.0;
+
+      /** There may be 6 situations as follows:
+       *  (Min, Max) represents the range of fp16
+       *  (o, x) represents the min/max values
+       *
+       *           Min                     Max
+       *            +-----------------------+
+       *    o    x  |                       |
+       *    o       |            x          |
+       *    o       |                       |   x
+       *            |    o       x          |
+       *            |    o                  |   x
+       *            |                       |   o     x
+       */
+      if (min_value < low_bound && max_value < low_bound) {
+        qinfo->scale = min_value / low_bound;
+      } else if (min_value < low_bound && (max_value >= low_bound && max_value <= high_bound)) {
+        qinfo->scale = 1.0;
+      } else if (min_value < low_bound && max_value > high_bound) {
+        qinfo->scale = max_value / high_bound;
+      } else if ((min_value >= low_bound && min_value <= high_bound) &&
+                 (max_value >= low_bound && max_value <= high_bound)) {
+        qinfo->scale = 1.0;
+      } else if ((min_value >= low_bound && min_value <= high_bound) && max_value > high_bound) {
+        qinfo->scale = max_value / high_bound;
+      } else if (min_value > high_bound && max_value > high_bound) {
+        qinfo->scale = max_value / high_bound;
+      } else {
+        qinfo->scale = 1.0;
+      }
     }
   } else {
     int valid_range = std::pow(2, bits - 1) - 1;
@@ -820,6 +853,8 @@ class QuantInfoMutator : public HHBExprMutator {
       ret = TisoOp<QnnCSIUnaryAttrs>(call);
     } else if (IsOp(call, "qnn.csi.where_softmax")) {
       ret = TisoOp<QnnCSIWhereSoftmaxAttrs>(call);
+    } else if (IsOp(call, "qnn.csi.data_convert")) {
+      ret = SisoOp<QnnCSIDataConvertAttrs>(call);
     } else {
       LOG(FATAL) << "Unsupported op: " << AsText(call->op, false);
     }

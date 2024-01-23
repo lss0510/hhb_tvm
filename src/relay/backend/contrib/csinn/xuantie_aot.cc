@@ -437,6 +437,7 @@ void XuanTie_AOT::compile(const Expr& expr) {
 string emit_alloc() {
   std::ostringstream code_stream;
   code_stream << "#include \"csi_nn.h\"\n";
+  code_stream << "#include \"shl_memory.h\"\n";
   code_stream << "void* TVMBackendAllocWorkspace(int device_type, int device_id, uint64_t nbytes, "
                  "int dtype_code_hint, int dtype_bits_hint) {";
   code_stream << "return shl_mem_alloc(nbytes);\n";

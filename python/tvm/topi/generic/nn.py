@@ -614,6 +614,40 @@ def schedule_softmax(outs):
     return _default_schedule(outs, False)
 
 
+def schedule_reshape(outs):
+    """Schedule for reshape
+
+    Parameters
+    ----------
+    outs: Array of Tensor
+          The computation graph description of reshape
+          in the format of an array of tensors.
+
+    Returns
+    -------
+    sch: Schedule
+        The computation schedule for the op.
+    """
+    return _default_schedule(outs, False)
+
+
+def schedule_layout_transform(outs):
+    """Schedule for layout_transform
+
+    Parameters
+    ----------
+    outs: Array of Tensor
+          The computation graph description of layout_transform
+          in the format of an array of tensors.
+
+    Returns
+    -------
+    sch: Schedule
+        The computation schedule for the op.
+    """
+    return _default_schedule(outs, False)
+
+
 def schedule_fast_softmax(outs):
     """Schedule for fast_softmax
 

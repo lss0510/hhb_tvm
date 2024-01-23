@@ -54,7 +54,7 @@ register_broadcast_schedule("round")
 register_broadcast_schedule("sign")
 register_broadcast_schedule("abs")
 register_broadcast_schedule("tanh")
-register_broadcast_schedule("add")
+# register_broadcast_schedule("add")
 register_broadcast_schedule("subtract")
 register_broadcast_schedule("multiply")
 register_broadcast_schedule("divide")
@@ -94,6 +94,8 @@ register_broadcast_schedule("fast_exp")
 register_broadcast_schedule("fast_tanh")
 register_broadcast_schedule("fast_erf")
 
+register_strategy("add", strategy.add_strategy)
+
 
 @register_legalize("erf")
 def legalize_erf(attrs, inputs, types):
@@ -126,6 +128,7 @@ def zeros_compute(attrs, inputs, output_type):
 register_broadcast_schedule("zeros")
 register_pattern("zeros", OpPattern.ELEMWISE)
 
+
 # zeros_like
 @register_compute("zeros_like")
 def zeros_like_compute(attrs, inputs, output_type):
@@ -134,6 +137,7 @@ def zeros_like_compute(attrs, inputs, output_type):
 
 
 register_broadcast_schedule("zeros_like")
+
 
 # ones
 @register_compute("ones")
@@ -145,6 +149,7 @@ def ones_compute(attrs, inputs, output_type):
 register_broadcast_schedule("ones")
 register_pattern("ones", OpPattern.ELEMWISE)
 
+
 # ones_like
 @register_compute("ones_like")
 def ones_like_compute(attrs, inputs, output_type):
@@ -153,6 +158,7 @@ def ones_like_compute(attrs, inputs, output_type):
 
 
 register_broadcast_schedule("ones_like")
+
 
 # clip
 @register_compute("clip")
@@ -163,6 +169,7 @@ def clip_compute(attrs, inputs, output_type):
 
 register_injective_schedule("clip")
 
+
 # fixed point multiply
 @register_compute("fixed_point_multiply")
 def fixed_point_multiply_compute(attrs, inputs, output_type):
@@ -171,6 +178,7 @@ def fixed_point_multiply_compute(attrs, inputs, output_type):
 
 
 register_injective_schedule("fixed_point_multiply")
+
 
 # full
 @script

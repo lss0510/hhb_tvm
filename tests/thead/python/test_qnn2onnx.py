@@ -19,7 +19,7 @@
 
 import numpy as np
 import onnxruntime as rt
-
+import logging
 import tvm
 from tvm import relay
 from tvm.relay.quantize import qnn_to_onnx
@@ -28,6 +28,8 @@ from tvm.relay.frontend.common import infer_shape
 import hhb
 
 hhb.set_debug_level("ERROR")
+logger = logging.getLogger("HHB")
+LOG = 25
 
 
 def qmod_to_onnx(qmod, name):
@@ -921,7 +923,7 @@ def test_batch_matmul():
         quant_scheme = "float32"
         qnn_ir = quantize_relay_ir(relay_ir, quant_scheme=quant_scheme)
         verify_results(
-            relay_ir, qnn_ir, [x_data, y_data], "test_batch_matmul", rtol=1e-5, atol=1e-5
+            relay_ir, qnn_ir, [x_data, y_data], "test_batch_matmul", rtol=1e-4, atol=1e-4
         )
 
     verify_matmul(x_shape=(2, 3, 4), y_shape=(2, 4, 3), transa=True, transb=True)

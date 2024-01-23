@@ -18,25 +18,28 @@
 import argparse
 import logging
 import sys
-import os
 import json
 import os
 
-from tvm.relay.quantize.quantize_hhb import detect_quantized_model
+import onnx
+from onnxsim import simplify
+
 from tvm import relay
+from tvm.contrib.target.onnx import to_onnx
+from tvm.relay.quantize.quantize_hhb import _bind_params
+from tvm.relay.quantize.quantize_hhb import optimization_phase0
 
 from .core.arguments_manage import ArgumentManage, CommandType, HHBException, ArgumentFilter
-from .core.arguments_manage import update_arguments_by_file, get_default_config, AttributeDict
-from .core.arguments_manage import Config, ArgumentsBase
-from .core.common import ensure_dir, import_module_for_register, collect_arguments_info
-from .core.common import ArgInfo, ALL_ARGUMENTS_DESC, ARGS_DEST_TO_OPTIONS_STRING
-from .core.main_command_manage import driver_main_command
+from .core.arguments_manage import update_arguments_by_file
+from .core.arguments_manage import Config
+from .core.common import collect_arguments_info
+from .core.common import ALL_ARGUMENTS_DESC
 from .core.hhbir_manage import HHBRelayIR, HHBQNNIR, reorder_pixel_format, HHBBoardBuildRuntime
 from .core.preprocess_manage import hhb_preprocess
 from .core.frontend_manage import insert_preprocess_node
 from .core.profiler_manage import aitrace_options, convert_tvm_trace2python
 from .core.quantization_manage import get_quant_scheme_from_qnn, convert_per_channel_scheme
-from .core.main_command_manage import print_model_info, optimize_model
+from .core.main_command_manage import print_model_info
 from .core.frontend_manage import get_io_info_from_onnx
 from .importer import hhb_import
 from .quantizer import hhb_quantize
@@ -72,37 +75,6 @@ def set_debug_level(level="LOG"):
     )
     logger = logging.getLogger("HHB")
     logger.setLevel(level_num)
-
-
-def hhb_compile(hhb_config_file, **kwargs):
-    """It includes all procedures that compile model with hhb: import->quantize->codegen->run.
-
-    Parameters
-    ----------
-    hhb_config_file : str
-        The path of config file.
-
-    kwargs : dict
-        Other values which will overwirte values in hhb_config_file.
-    """
-    base_config, _ = get_default_config()
-
-    with open(hhb_config_file, "r") as f:
-        usr_config = json.load(f)
-
-    for sec, value in usr_config.items():
-        base_config[sec].update(value)
-
-    # unroll arguments
-    unroll_config = AttributeDict()
-    for sec, value in base_config.items():
-        unroll_config.update(value)
-
-    if kwargs:
-        unroll_config.update(kwargs)
-
-    args_filter = ArgumentFilter(unroll_config)
-    driver_main_command(args_filter)
 
 
 class Compiler(object):
@@ -157,45 +129,6 @@ class Compiler(object):
 
         out = hhb_preprocess(data_path, self.config, is_generator)
         return out
-
-    def optimize(self, opt_tool: str):
-        """Optimize model with specified tool and generate new onnx file.
-
-        Parameters
-        ----------
-        opt_tool : str
-            Optimization tool, current support ppq.
-        """
-        if opt_tool == "ppq":
-            # quantize model with ppq tool
-            print_model_info(
-                self.config.main.model_file.value,
-                self.config.import_config.input_name.value,
-                self.config.import_config.input_shape.value,
-                self.config.import_config.output_name.value,
-                "Before optimization",
-            )
-            ppq_quantized_file = optimize_model(
-                self.config.main.model_file,
-                self.config.quantize.quantization_tool.value,
-                self.config,
-            )
-            # update info
-            input_name, input_shape, output_name, _ = get_io_info_from_onnx(ppq_quantized_file)
-            self.config.import_config.input_name.value = input_name
-            self.config.import_config.input_shape.value = input_shape
-            self.config.import_config.output_name.value = output_name
-            self.config.main.model_file.value = [ppq_quantized_file]
-
-            print_model_info(
-                self.config.main.model_file.value,
-                self.config.import_config.input_name.value,
-                self.config.import_config.input_shape.value,
-                self.config.import_config.output_name.value,
-                "After optimization",
-            )
-        else:
-            raise HHBException(f"Unsupport for too: {opt_tool}\n")
 
     def import_model(
         self,
@@ -255,12 +188,129 @@ class Compiler(object):
         if self.relay_ir is None:
             raise HHBException("Please import model by import_model() first.")
 
+        logger = logging.getLogger("HHB")
+
+        if self.config.quantize.quantization_tool.value == "ppq":
+            model_path = self.config.main.model_file.value
+
+            ppq_calibrate_data = []
+            for d in calibrate_data:
+                inter = []
+                for name in self.config.import_config.input_name.value:
+                    inter.append(d[name])
+                ppq_calibrate_data.append(inter)
+
+            is_onnx = False
+            if isinstance(model_path, str):
+                is_onnx = os.path.splitext(model_path)[-1] == ".onnx"
+            if self.config.optimize.opt_level == 3 or not is_onnx:
+                # convert original relay ir into onnx
+                logger.log(
+                    LOG,
+                    "Original model is not onnx or need to be optimized, convert relay to onnx...",
+                )
+                mod, params = self.relay_ir.get_model()
+                if params:
+                    mod["main"] = _bind_params(mod["main"], params)
+                    params = None
+                # optimize relay ir
+                mod = optimization_phase0(mod)
+                mod = relay.transform.InferType()(mod)
+
+                # convert to onnx
+                if save_to_dir:
+                    if not os.path.exists(save_to_dir):
+                        os.makedirs(save_to_dir)
+                    relay_onnx_path = os.path.join(save_to_dir, "model_relay_opt.onnx")
+                else:
+                    relay_onnx_path = "model_relay_opt.onnx"
+                onnx_model = to_onnx(mod, {}, "relay")
+                # simplify onnx
+                onnx_model_sim, check = simplify(onnx_model)
+                if check:
+                    onnx.save(onnx_model_sim, relay_onnx_path)
+                else:
+                    onnx.save(onnx_model, relay_onnx_path)
+                    logger.warning("Fail to optimize onnx with onnxsim, back to relay onnx.")
+                logger.debug("New model with relay optimization is save in %s", relay_onnx_path)
+
+                model_path = relay_onnx_path
+                new_input_name, new_input_shape, new_output_name, _ = get_io_info_from_onnx(
+                    model_path
+                )
+                self.config.import_config.input_name.value = new_input_name
+                self.config.import_config.input_shape.value = new_input_shape
+                self.config.import_config.output_name.value = new_output_name
+
+            print_model_info(
+                model_path,
+                self.config.import_config.input_name.value,
+                self.config.import_config.input_shape.value,
+                self.config.import_config.output_name.value,
+                "Before optimization with ppq",
+            )
+
+            device = self.config.quantize.quant_device.value
+            from .tools.ppq_quantization import quantize_ppq
+            from ppq.api import ENABLE_CUDA_KERNEL
+
+            output_dir = "."
+            if save_to_dir:
+                output_dir = save_to_dir
+                if not os.path.exists(save_to_dir):
+                    os.makedirs(save_to_dir)
+            if device == "cuda":
+                with ENABLE_CUDA_KERNEL():
+                    new_model_path, _ = quantize_ppq(
+                        model_path,
+                        self.config.import_config.input_shape.value,
+                        self.config.quantize,
+                        ppq_calibrate_data,
+                        batch_size=self.config.quantize.cali_batch.value,
+                        device=device,
+                        output_dir=output_dir,
+                        target=self.config.optimize.board.value,
+                    )
+            else:
+                new_model_path, _ = quantize_ppq(
+                    model_path,
+                    self.config.import_config.input_shape.value,
+                    self.config.quantize,
+                    ppq_calibrate_data,
+                    batch_size=self.config.quantize.cali_batch.value,
+                    device=device,
+                    output_dir=output_dir,
+                    target=self.config.optimize.board.value,
+                )
+            self.config.main.model_file.value = [new_model_path]
+            new_input_name, new_input_shape, new_output_name, _ = get_io_info_from_onnx(
+                new_model_path
+            )
+            self.config.import_config.input_name.value = new_input_name
+            self.config.import_config.input_shape.value = new_input_shape
+            self.config.import_config.output_name.value = new_output_name
+
+            print_model_info(
+                new_model_path,
+                self.config.import_config.input_name.value,
+                self.config.import_config.input_shape.value,
+                self.config.import_config.output_name.value,
+                "After optimization with ppq",
+            )
+
+            self.import_model(
+                self.config.main.model_file.value,
+                input_name=self.config.import_config.input_name.value,
+                input_shape=self.config.import_config.input_shape.value,
+                output_name=self.config.import_config.output_name.value,
+                save_to_dir=save_to_dir,
+            )
+
         quant_scheme, is_per_channel, qnn_dtypes = get_quant_scheme_from_qnn(
             self.relay_ir.get_model()[0]
         )
         if self.config.quantize.quantization_scheme.value == "unset" and qnn_dtypes:
             # there is quantize/dequantize op in module, so it is a quantized model.
-            logger = logging.getLogger("HHB")
             if quant_scheme and is_per_channel:
                 coverted_quant_scheme = convert_per_channel_scheme(quant_scheme)
                 if coverted_quant_scheme is None:

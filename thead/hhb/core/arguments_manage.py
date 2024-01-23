@@ -15,8 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 """Manage command line arguments."""
-from collections import OrderedDict, namedtuple
-from email.mime import base
+from collections import namedtuple
 from inspect import ArgSpec
 import os
 import sys
@@ -33,7 +32,6 @@ from .common import (
     AttributeDict,
     get_parameters_info,
     argument_filter_helper,
-    ALL_ARGUMENTS_DESC,
     generate_readme_file,
     find_index,
     hhb_exit,
@@ -45,7 +43,6 @@ from .common import (
 from .preprocess_manage import collect_preprocess_config, set_preprocess_params
 from .quantization_manage import (
     collect_quantization_config,
-    get_config_dict,
     set_quantize_params_by_board,
 )
 from .codegen_manage import collect_codegen_config, set_codegen_config
@@ -339,6 +336,7 @@ class QuantizeArguments(ArgumentsBase):
         )
         self.quantization_scheme = ArgSpecHelper(
             name="--quantization-scheme",
+            abbr_name="-qs",
             choices=[
                 "int4_asym_w_sym",
                 "uint8_asym",
@@ -349,12 +347,11 @@ class QuantizeArguments(ArgumentsBase):
                 "int16_sym",
                 "float16",
                 "float16_w_int8",
-                "bfloat16",
                 "float32",
                 "unset",
             ],
             default="unset",
-            help="Scheme of quantization. default is unset, and select scheme by --board.",
+            help="Scheme of quantization. default is unset.",
         )
         self.auto_hybrid_quantization = ArgSpecHelper(
             name="--auto-hybrid-quantization",
@@ -412,7 +409,6 @@ class QuantizeArguments(ArgumentsBase):
                 "int8_asym_w_sym",
                 "int16_sym",
                 "float16",
-                "bfloat16",
                 "float32",
                 "unset",
             ],
@@ -483,6 +479,20 @@ class QuantizeArguments(ArgumentsBase):
             default="maxmin",
             help="How to calibrate while doing quantization, default is maxmin.",
             hidden=True,
+        )
+        self.low_bound_scale = ArgSpecHelper(
+            name="--low-bound-scale",
+            type=float,
+            default=1,
+            help="Enlarge the low bound of the data type of specified quantization mode to "
+            "avoid overflow during calculation. It should be >=1",
+        )
+        self.high_bound_scale = ArgSpecHelper(
+            name="--high-bound-scale",
+            type=float,
+            default=1,
+            help="Reduce the high bound of the data type of specified quantization mode to "
+            "avoid overflow during calculation. It should be in (0, 1]",
         )
         self.activate_quantized_type = ArgSpecHelper(
             name="--activate-quantized-type",
@@ -631,6 +641,12 @@ class QuantizeArguments(ArgumentsBase):
             default=16,
             help="The batch size for calibration.",
         )
+        self.align_elementwise = ArgSpecHelper(
+            name="--align-elementwise",
+            choices=["None", "Align to Large"],
+            default="Align to Large",
+            help="The method that aligns the inputs quant config of elementwise ops.",
+        )
 
     @property
     def name(self):
@@ -728,6 +744,11 @@ class PostprocessArguments(ArgumentsBase):
             "'save' save output to file;"
             "'save_and_top5' show top5 and save output to file."
             " Default is top5",
+        )
+        self.show_session_run_time = ArgSpecHelper(
+            name="--show-session-run-time",
+            action="store_true",
+            help="If set, print session run time.",
         )
 
     @property
@@ -852,11 +873,6 @@ class CodegenArguments(ArgumentsBase):
             "1: allocated by CPU and aligned;\n"
             "2: dma buffer.",
         )
-        self.dynamic_cb_reg = ArgSpecHelper(
-            name="--dynamic-cb-reg",
-            action="store_true",
-            help="Emit cb_map file to reduce elf size on RTOS.",
-        )
         self.conv2d_algorithm = ArgSpecHelper(
             name="--conv2d-algorithm",
             choices=["direct", "winograd", "gemm", "unset"],
@@ -926,6 +942,25 @@ class ProfilerArguments(ArgumentsBase):
             default="total",
             nargs="+",
             help="How to show results, default is show summary result.",
+        )
+        self.arch = ArgSpecHelper(
+            name="--arch",
+            choices=[
+                "relay",
+                "npuperf",
+            ],
+            type=str,
+            help="Target architecture for profiling.",
+        )
+        self.tracing = ArgSpecHelper(
+            name="--tracing",
+            action="store_true",
+            help="Generate unify tracing data.",
+        )
+        self.arch_config = ArgSpecHelper(
+            name="--arch-config",
+            type=str,
+            help="Configurable parameters for specified architecture. Supported file type: .json.",
         )
 
     @property
@@ -1132,6 +1167,7 @@ class Config(object):
                 set_quantize_params_by_board,
                 collect_codegen_config,
                 set_codegen_config,
+                parse_sram_size,
             ]
             if (
                 self.import_config.input_shape.value is None
@@ -1520,7 +1556,7 @@ class ArgumentManage(object):
 
 def get_default_config():
     arg_manage = ArgumentManage([])
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = argparse.ArgumentParser(prog="hhb_api", add_help=False)
     # add command line parameters
     arg_manage.set_main_command(parser)
     add_profiler_argument(parser)

@@ -787,7 +787,7 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
 
         if device_config["ahead_of_time"] == "intrinsic":
             with tvm.transform.PassContext(
-                opt_level=opt_level, config={"relay.ext.csinn.options": device_config}
+                opt_level=3, config={"relay.ext.csinn.options": device_config}
             ):
                 csinn_mod = csinn.partition_for_csinn(mod, params)
                 factory = relay.build(csinn_mod, target=target, params=params)
@@ -830,18 +830,9 @@ class HHBBoardQnnCodegenIR(HHBIRBase):
         from .codegen_manage import (
             main_c_codegen,
             jit_c_codegen,
-            generate_c906_cb_reg,
-            generate_rvv_cb_reg,
         )
 
-        if board == "c906" and codegen_config.dynamic_cb_reg:
-            dump_file_path = os.path.join(output_path, "cb_reg.c")
-            logger.info("write bc reg to %s", dump_file_path)
-            opks = generate_c906_cb_reg(self.mod, board, dump_file_path, q_scheme)
-            dump_file_path = os.path.join(output_path, "cb_rvv.c")
-            logger.info("write bc rvv to %s", dump_file_path)
-            opks = generate_rvv_cb_reg(False, dump_file_path, q_scheme, opks)
-        elif board in ("th1520", "hth1520", "c920"):
+        if board in ("th1520", "hth1520", "c920"):
             jit_c_codegen(
                 self, input_shape, output_shape, board, output_path, preprocess_params, q_scheme
             )
@@ -1226,9 +1217,7 @@ class HHBBoardBuildRuntime:
             if self.board == "th1520_x86":
                 _, shl_dir, _, _, _ = find_base_path()
                 sim_exec_data += "NNA_DDK_DIR ?=\n"
-                sim_exec_data += (
-                    f"export LD_LIBRARY_PATH=${{NNA_DDK_DIR}}/x86:{os.path.join(shl_dir, 'lib')}\n"
-                )
+                sim_exec_data += f"export LD_LIBRARY_PATH=${{NNA_DDK_DIR}}/x86:{os.path.join(shl_dir, 'pnna_x86', 'lib')}\n"
                 sim_exec_data += "export SIM_VISION_PATH=${NNA_DDK_DIR}/x86/sim_nna.so\n"
             sim_exec_data += f"run_sim: {self.runtime_name}\n"
             input_data = glob.glob(os.path.join(self.work_dir, "*.bin"))

@@ -196,9 +196,16 @@ class FuseLayerNormal:
                 self.sqrt = is_op("sqrt")(self.add1)
                 # div
                 self.div = is_op("divide")(self.sub, self.sqrt)
+
+                # reshape optition
+                self.reshape = is_op("reshape")(self.div)
+
                 # mul
                 self.mul_val = is_constant()
-                self.mul = is_op("multiply")(self.div, self.mul_val)
+                self.mul = is_op("multiply")(self.div, self.mul_val) | is_op("multiply")(
+                    self.reshape, self.mul_val
+                )
+
                 # add2
                 self.add2_val = is_constant()
                 self.add2 = is_op("add")(self.mul, self.add2_val)
@@ -209,12 +216,17 @@ class FuseLayerNormal:
                 """taget op"""
                 in_node = node_map[self.input][0]
                 axis = int(node_map[self.mean1][0].attrs.axis[0])
-                eps = node_map[self.add1_val][0].data.asnumpy().tolist()
+                eps = node_map[self.add1_val][0].data.asnumpy().reshape(-1)[0]
                 gamma = node_map[self.mul_val][0]
                 beta = node_map[self.add2_val][0]
 
                 new_node = relay.op.nn.layer_norm(in_node, gamma, beta, axis, eps)
-                return new_node
+                new_shape = infer_shape(new_node)
+                old_shape = infer_shape(pre)
+                if new_shape == old_shape:
+                    return new_node
+                else:
+                    return relay.op.reshape(new_node, old_shape)
 
         out = rewrite(MyCallback(), mod["main"].body)
         res = tvm.IRModule.from_expr(out)
@@ -482,6 +494,29 @@ class Resume4DimsMatMul:
                 bias = relay.expr.const(0, dtype="float32")
                 matmul_attrs = _qnn_attrs(node_map[self.matmul][0].attrs)
                 new_node = relay.qnn.op.csi_matmul(in_node0, in_node1, bias, **matmul_attrs)
+                reshape2 = node_map[self.reshape2][0]
+                reshape_attrs = _qnn_attrs(reshape2.attrs)
+                out_new_shape = reshape_attrs["newshape"]
+                if len(out_new_shape) not in [3, 4]:
+                    new_node = relay.qnn.op.csi_reshape(new_node, **reshape_attrs)
+
+                in_shape0 = infer_shape(in_node0)
+                in_shape1 = infer_shape(in_node1)
+                if len(in_shape0) == len(in_shape1):
+                    return new_node
+                reshape0 = node_map[self.reshape0][0]
+                reshape1 = node_map[self.reshape1][0]
+
+                out_shape = infer_shape(node_map[self.matmul][0])
+
+                in0 = (
+                    in_node0
+                    if len(in_shape0) == len(out_shape) and in_shape0[:2] == out_shape[:2]
+                    else reshape0
+                )
+                in1 = in_node1 if len(in_shape1) == len(out_shape) else reshape1
+                new_node = relay.qnn.op.csi_matmul(in0, in1, bias, **matmul_attrs)
+                new_node = relay.qnn.op.csi_reshape(new_node, **reshape_attrs)
                 return new_node
 
         out = rewrite(MyCallback(), mod["main"].body)
@@ -567,7 +602,8 @@ class FuseActivateQuantInfo:
         return res["main"]
 
 
-def fuse_input_quant_info(mod):
+@function_pass(opt_level=1)
+class FuseInputQuantInfo:
     r"""Extract quant info of input node from quantize/dequantize ops
          and fuse them into subsequent op.
 
@@ -581,42 +617,21 @@ def fuse_input_quant_info(mod):
 
     """
 
-    class InterHelper(relay.ExprMutator):
-        """Internal helper class"""
+    def transform_function(self, func, mod, ctx):
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
 
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-            new_op_attrs = _qnn_attrs(call.attrs)
-            new_args = list(op_args)
+        class FuseInputQuantInfoMutator(relay.ExprMutator):
+            """Internal helper class"""
 
-            for i, arg in enumerate(op_args):
-                if isinstance(arg, Call):
-                    if arg.op.name == "qnn.csi.dequantize":
-                        quant_node = arg.args[0]
-                        if (
-                            quant_node
-                            and isinstance(quant_node, Call)
-                            and quant_node.op.name == "qnn.csi.quantize"
-                        ):
-                            var_node = quant_node.args[0]
-                            if var_node and isinstance(var_node, Var):
-                                scale_val = arg.args[1].data.numpy()
-                                scale_val = get_quant_value(scale_val)
-                                zp_val = arg.args[2].data.numpy()
-                                zp_val = get_quant_value(zp_val)
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                new_op_attrs = _qnn_attrs(call.attrs)
+                new_args = list(op_args)
 
-                                new_op_attrs["q_params"][i] = [1, 1, 0, scale_val, zp_val]
-                                new_args[i] = var_node
-                elif isinstance(arg, Tuple):
-                    new_tuple = []
-                    for j in range(len(arg)):
-                        dequant_node = arg.field[j]
-                        if (
-                            dequant_node
-                            and isinstance(dequant_node, Call)
-                            and dequant_node.op.name == "qnn.csi.dequantize"
-                        ):
-                            quant_node = dequant_node.args[0]
+                for i, arg in enumerate(op_args):
+                    if isinstance(arg, Call):
+                        if arg.op.name == "qnn.csi.dequantize":
+                            quant_node = arg.args[0]
                             if (
                                 quant_node
                                 and isinstance(quant_node, Call)
@@ -624,24 +639,48 @@ def fuse_input_quant_info(mod):
                             ):
                                 var_node = quant_node.args[0]
                                 if var_node and isinstance(var_node, Var):
-                                    scale_val = dequant_node.args[1].data.numpy()
+                                    scale_val = arg.args[1].data.numpy()
                                     scale_val = get_quant_value(scale_val)
-                                    zp_val = dequant_node.args[2].data.numpy()
+                                    zp_val = arg.args[2].data.numpy()
                                     zp_val = get_quant_value(zp_val)
 
-                                    new_op_attrs["q_params"][j] = [1, 1, 0, scale_val, zp_val]
+                                    new_op_attrs["q_params"][i] = [1, 1, 0, scale_val, zp_val]
+                                    new_args[i] = var_node
+                    elif isinstance(arg, Tuple):
+                        new_tuple = []
+                        for j in range(len(arg)):
+                            dequant_node = arg.field[j]
+                            if (
+                                dequant_node
+                                and isinstance(dequant_node, Call)
+                                and dequant_node.op.name == "qnn.csi.dequantize"
+                            ):
+                                quant_node = dequant_node.args[0]
+                                if (
+                                    quant_node
+                                    and isinstance(quant_node, Call)
+                                    and quant_node.op.name == "qnn.csi.quantize"
+                                ):
+                                    var_node = quant_node.args[0]
+                                    if var_node and isinstance(var_node, Var):
+                                        scale_val = dequant_node.args[1].data.numpy()
+                                        scale_val = get_quant_value(scale_val)
+                                        zp_val = dequant_node.args[2].data.numpy()
+                                        zp_val = get_quant_value(zp_val)
 
-                                    new_tuple.append(var_node)
-                                    continue
-                        new_tuple.append(dequant_node)
-                    new_args[i] = Tuple(new_tuple)
-            return csi_op().all_handle[call.op.name](*new_args, **new_op_attrs)
+                                        new_op_attrs["q_params"][j] = [1, 1, 0, scale_val, zp_val]
 
-    mod["main"] = InterHelper().visit(mod["main"])
-    return mod
+                                        new_tuple.append(var_node)
+                                        continue
+                            new_tuple.append(dequant_node)
+                        new_args[i] = Tuple(new_tuple)
+                return csi_op().all_handle[call.op.name](*new_args, **new_op_attrs)
+
+        return FuseInputQuantInfoMutator().visit(func)
 
 
-def fuse_dequantize_op(mod):
+@function_pass(opt_level=1)
+class FuseDequantizeOp:
     r"""Fuse dequantize into op.
 
     dequantize
@@ -650,47 +689,49 @@ def fuse_dequantize_op(mod):
 
     """
 
-    class InterHelper(relay.ExprMutator):
-        """Internal helper class"""
+    def transform_function(self, func, mod, ctx):
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
 
-        def visit_call(self, call):
-            op_args = [self.visit(arg) for arg in call.args]
-            new_op_attrs = _qnn_attrs(call.attrs)
-            new_args = list(op_args)
+        class FuseDequantizeOpMutator(relay.ExprMutator):
+            """Internal helper class"""
 
-            for i, arg in enumerate(op_args):
-                if isinstance(arg, Call):
-                    if arg.op.name == "qnn.csi.dequantize":
-                        const_node = arg.args[0]
-                        if const_node and isinstance(const_node, Constant):
-                            scale_val = arg.args[1].data.numpy()
-                            scale_val = get_quant_value(scale_val)
-                            zp_value = arg.args[2].data.numpy()
-                            zp_value = get_quant_value(zp_value)
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                new_op_attrs = _qnn_attrs(call.attrs)
+                new_args = list(op_args)
 
-                            new_op_attrs["q_params"][i] = [1, 1, 0, scale_val, zp_value]
-                            new_args[i] = const_node
-                elif isinstance(arg, Tuple):
-                    new_tuple = []
-                    for j in range(len(arg)):
-                        dequant_node = arg.field[j]
-                        if (
-                            dequant_node
-                            and isinstance(dequant_node, Call)
-                            and dequant_node.op.name == "qnn.csi.dequantize"
-                        ):
-                            const_node = dequant_node.args[0]
+                for i, arg in enumerate(op_args):
+                    if isinstance(arg, Call):
+                        if arg.op.name == "qnn.csi.dequantize":
+                            const_node = arg.args[0]
                             if const_node and isinstance(const_node, Constant):
-                                scale_val = dequant_node.args[1].data.numpy()
+                                scale_val = arg.args[1].data.numpy()
                                 scale_val = get_quant_value(scale_val)
-                                zp_value = dequant_node.args[2].data.numpy()
+                                zp_value = arg.args[2].data.numpy()
                                 zp_value = get_quant_value(zp_value)
 
-                                new_op_attrs["q_params"][j] = [1, 1, 0, scale_val, zp_value]
-                                continue
-                        new_tuple.append(dequant_node)
-                    new_args[i] = Tuple(new_tuple)
-            return csi_op().all_handle[call.op.name](*new_args, **new_op_attrs)
+                                new_op_attrs["q_params"][i] = [1, 1, 0, scale_val, zp_value]
+                                new_args[i] = const_node
+                    elif isinstance(arg, Tuple):
+                        new_tuple = []
+                        for j in range(len(arg)):
+                            dequant_node = arg.field[j]
+                            if (
+                                dequant_node
+                                and isinstance(dequant_node, Call)
+                                and dequant_node.op.name == "qnn.csi.dequantize"
+                            ):
+                                const_node = dequant_node.args[0]
+                                if const_node and isinstance(const_node, Constant):
+                                    scale_val = dequant_node.args[1].data.numpy()
+                                    scale_val = get_quant_value(scale_val)
+                                    zp_value = dequant_node.args[2].data.numpy()
+                                    zp_value = get_quant_value(zp_value)
 
-    mod["main"] = InterHelper().visit(mod["main"])
-    return mod
+                                    new_op_attrs["q_params"][j] = [1, 1, 0, scale_val, zp_value]
+                                    continue
+                            new_tuple.append(dequant_node)
+                        new_args[i] = Tuple(new_tuple)
+                return csi_op().all_handle[call.op.name](*new_args, **new_op_attrs)
+
+        return FuseDequantizeOpMutator().visit(func)

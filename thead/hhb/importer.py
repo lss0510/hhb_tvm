@@ -138,9 +138,4 @@ def driver_import(args_filter):
         generate_config_file(os.path.join(args.output, "cmd_import_params.yml"))
 
     relay_ir.save_model(args.output)
-    # if args.opt_level != -1:
-    #     target = get_target(args.board)
-    #     with tvm.transform.PassContext(opt_level=args.opt_level):
-    #         mod, params = relay.optimize(mod, target=target, params=params)
-
     return 0

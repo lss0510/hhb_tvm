@@ -17,10 +17,10 @@
  * under the License.
  */
 
-/* auto generate by HHB_VERSION "2.6.0" */
+/* auto generate by HHB_VERSION "2.8.1" */
 
 #_hhb_header_files_#
-
+#include "cmd_parse.h"
 #_hhb_macro_def_#
 
 #_hhb_function_decl_#
@@ -65,21 +65,24 @@ int main(int argc, char **argv) {
     int input_group_num = 1;
     int i;
 
-    if (argc == 3 && get_file_type(argv[2]) == FILE_TXT) {
-        data_path = read_string_from_file(argv[2], &input_group_num);
-        input_group_num /= input_num;
-    } else if (argc >= (2 + input_num)) {
-        data_path = argv + 2;
-        input_group_num = (argc - 2) / input_num;
-    } else {
-        printf("Please set valide args: ./model.elf hhb.bm "
-                "[data1 data2 ...]|[.txt]\n");
+    struct cmdline_options *option = cmdline_parser(argc, argv);
+
+    if (option == NULL) {
         return -1;
+    } else {
+        int cmd_input_index = option->rest_line_index + 1;
+        if (get_file_type(argv[cmd_input_index]) == FILE_TXT) {
+            data_path = read_string_from_file(argv[cmd_input_index], &input_group_num);
+            input_group_num /= input_num;
+        } else {
+            data_path = argv + cmd_input_index;
+            input_group_num = (argc - cmd_input_index) / input_num;
+        }
     }
 
     #_hhb_gen_register_#
 
-    void *sess = create_graph(argv[1]);
+    void *sess = create_graph(argv[option->rest_line_index]);
 
     struct csinn_tensor* input_tensors[input_num];
     #_tensor_shape_#
@@ -93,14 +96,16 @@ int main(int argc, char **argv) {
             input_tensors[j]->data = shl_ref_f32_to_input_dtype(j, inputf[j], sess);
         }
 
-        start_time = shl_get_timespec();
-        csinn_update_input_and_run(input_tensors, sess);
-        end_time = shl_get_timespec();
-        printf("Run graph execution time: %.5fms, FPS=%.2f\n", ((float)(end_time-start_time))/1000000,
-                    1000000000.0/((float)(end_time-start_time)));
+        for (int loop = 0; loop < option->loop_time; loop++) {
+            start_time = shl_get_timespec();
+            csinn_update_input_and_run(input_tensors, sess);
+            end_time = shl_get_timespec();
+            printf("Run graph execution time: %.5fms, FPS=%.5f\n", ((float)(end_time-start_time))/1000000,
+                        1000000000.0/((float)(end_time-start_time)));
 
-        snprintf(filename_prefix, FILE_PREFIX_LENGTH, "%s", basename(data_path[i * input_num]));
-        postprocess(sess, filename_prefix);
+            snprintf(filename_prefix, FILE_PREFIX_LENGTH, "%s", basename(data_path[i * input_num]));
+            postprocess(sess, filename_prefix);
+        }
 
         for (int j = 0; j < input_num; j++) {
             shl_mem_free(inputf[j]);

@@ -132,6 +132,8 @@ void CodegenTH1520::VisitExpr_(const CallNode* call) {
     UnPool2d(call);
   } else if (IsOp(call, "qnn.csi.upsampling")) {
     UpSampling(call);
+  } else if (IsOp(call, "qnn.csi.data_convert")) {
+    DataConvert(call);
   } else {
     std::cerr << "th1520 unsupported op: " << AsText(call->op, false) << "\n";
     exit(-1);
@@ -264,11 +266,11 @@ void CodegenTH1520::EmitNBGSetup(void) {
     bm_graph.set_input(input_tensor);
   }
   string q_scheme = cfg->quantization_scheme;
-  if (q_scheme == "CSINN_QUANT_INT8_ASYM_W_SYM" || q_scheme == "CSINN_QUANT_INT8_ORIGINAL") {
+  if (q_scheme == "CSINN_QUANT_INT8_ORIGINAL") {
     q_scheme = "CSINN_QUANT_INT8_ASYM";
   }
-  bm_graph.sess->base_quant_type = CSINNTensorQuantStringToEnum(q_scheme);
 
+  bm_graph.sess->base_quant_type = CSINNTensorQuantStringToEnum(q_scheme);
   bm_graph.sess->base_api = CSINN_TH1520;
   bm_graph.sess->base_dtype = CSINNTensorDtypeStringToEnum(base_dtype_);
 
@@ -334,9 +336,7 @@ string CodegenTH1520::get_ccode(void) {
 
 void CodegenTH1520::ModelBinarySave() {
   std::ostringstream t0;
-  std::string quantization_scheme = cfg->quantization_scheme == "CSINN_QUANT_INT8_ASYM_W_SYM"
-                                        ? "CSINN_QUANT_INT8_ASYM"
-                                        : cfg->quantization_scheme;
+  std::string quantization_scheme = cfg->quantization_scheme;
   t0 << "sess->base_quant_type = " << quantization_scheme << ";";
   func_def_.OneLine(t0);
   if (model_save == "save_only") {

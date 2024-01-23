@@ -284,6 +284,11 @@ tvm_file_glob(GLOB_RECURSE COMPILER_SRCS
     src/support/*.cc
     )
 
+tvm_file_glob(GLOB_RECURSE HHB_COMPILER_SRCS
+      thead/src/optimizer/*.cc
+      )
+  list(APPEND COMPILER_SRCS ${HHB_COMPILER_SRCS})
+
 tvm_file_glob(GLOB CODEGEN_SRCS
   src/target/*.cc
   src/target/source/*.cc
@@ -631,7 +636,15 @@ include(cmake/modules/ClangFlags.cmake)
 set(CRC16_INCLUDE_PATH "3rdparty/libcrc/include")
 target_include_directorieS(
   tvm_objs
-  PRIVATE "${CRC16_INCLUDE_PATH}")
+  PRIVATE "${CRC16_INCLUDE_PATH}"
+  )
+
+target_include_directorieS(
+    tvm_objs
+    PUBLIC "thead/src/optimizer"
+)
+
+
 
 target_include_directorieS(
   tvm_libinfo_objs

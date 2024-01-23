@@ -20,11 +20,13 @@
 import collections
 import json
 import logging
+import math
 
 import numpy as np
 
 import tvm
 from tvm import relay
+from tvm.relay.expr_functor import ExprVisitor
 from tvm.relay.expr import RelayExpr
 from tvm.relay.expr import Call, Var, Tuple, Constant, TupleGetItem
 from ..dataflow_pattern import DFPatternCallback
@@ -232,6 +234,10 @@ class QNNQuantizationSpec(object):
     def simo(self):
         return ["qnn.csi.split"]
 
+    @property
+    def ignore_check(self):
+        return ["qnn.csi.relu", "qnn.csi.relu6", "qnn.csi.mean"]
+
 
 @function_pass(opt_level=1)
 class QNNSeparateRepeatedQDQ:
@@ -330,6 +336,9 @@ class QNNFuseQDQ:
         input -> qnn_layer1 -> qnn_layer2 -> output
 
     """
+
+    def __init__(self, config) -> None:
+        self.config = config
 
     def transform_function(self, func, mod, ctx):
         """Helper function to convert qnn ir."""
@@ -574,7 +583,7 @@ class QNNFuseQDQ:
         # fuse biasadd
         from ._convert_to_csi import fuse_layer
 
-        res = fuse_layer(res)
+        res = fuse_layer(res, self.config)
 
         qnn_map = QNNNodeMap()
         qnn_map.create_map_from_module(res)
@@ -646,6 +655,117 @@ class QNNTh1520InsertReluBetweenSigmoidAndMul:
         return BetweenSigmoidAndMul().visit(func)
 
 
+class QNNConvertDict(ExprVisitor):
+    """Internal helper class to dump json."""
+
+    def __init__(self):
+        super().__init__()
+        self.qnn_data = collections.OrderedDict()
+        self.qnn_data["input_names"] = []
+        self.qnn_data["layers"] = []
+
+    def visit_var(self, var):
+        self.qnn_data["input_names"].append(var.name_hint)
+
+    def visit_call(self, call):
+        _ = [self.visit(arg) for arg in call.args]
+        call_attrs = _qnn_attrs(call.attrs)
+
+        layer_data = collections.OrderedDict()
+        layer_data["op_type"] = call.op.name
+        layer_data["name"] = call_attrs.pop("layer_name")
+        layer_data["hash_value"] = hash(call)
+
+        q_params = call_attrs.pop("q_params")
+        layer_data["attrs"] = collections.OrderedDict(sorted(call_attrs.items()))
+
+        # input tensor
+        input_data = []
+        for i, arg in enumerate(call.args):
+            arg_data = collections.OrderedDict()
+            if isinstance(arg, Var):
+                arg_data["name"] = arg.name_hint
+                arg_data["dim"] = infer_shape(arg)
+                arg_data["hash_value"] = hash(arg)
+                arg_data["index"] = 0
+                arg_data["q_param"] = q_params[i]
+            elif isinstance(arg, Call):
+                arg_data["name"] = arg.attrs.layer_name
+                arg_data["dim"] = infer_shape(arg)
+                arg_data["hash_value"] = hash(arg)
+                arg_data["index"] = 0
+                arg_data["q_param"] = q_params[i]
+            elif isinstance(arg, TupleGetItem):
+                true_call = arg.tuple_value
+                arg_data["name"] = true_call.attrs.layer_name
+                arg_data["dim"] = infer_shape(true_call).fields[arg.index].concrete_shape
+                arg_data["hash_value"] = hash(true_call)
+                arg_data["index"] = arg.index
+                arg_data["q_param"] = q_params[i]
+            elif isinstance(arg, Constant):
+                data = arg.data.numpy()
+                arg_data["name"] = arg.span.source_name.name if arg.span else "const_" + str(i)
+                arg_data["dim"] = data.shape
+                arg_data["hash_value"] = hash(arg)
+                arg_data["index"] = 0
+                arg_data["q_param"] = q_params[i]
+                arg_data["data"] = data.tolist()
+            elif isinstance(arg, Tuple):
+                for j, a in enumerate(arg):
+                    arg_data = collections.OrderedDict()
+                    if isinstance(a, Var):
+                        arg_data["name"] = a.name_hint
+                        arg_data["dim"] = infer_shape(a)
+                        arg_data["hash_value"] = hash(a)
+                        arg_data["index"] = 0
+                        arg_data["q_param"] = q_params[i + j]
+                    elif isinstance(a, Call):
+                        arg_data["name"] = a.attrs.layer_name
+                        arg_data["dim"] = infer_shape(a)
+                        arg_data["hash_value"] = hash(a)
+                        arg_data["index"] = 0
+                        arg_data["q_param"] = q_params[i + j]
+                    elif isinstance(a, TupleGetItem):
+                        true_call = a.tuple_value
+                        arg_data["name"] = true_call.attrs.layer_name
+                        arg_data["dim"] = infer_shape(true_call).fields[a.index].concrete_shape
+                        arg_data["hash_value"] = hash(true_call)
+                        arg_data["index"] = a.index
+                        arg_data["q_param"] = q_params[i + j]
+                    elif isinstance(a, Constant):
+                        data = a.data.numpy()
+                        arg_data["name"] = a.span.source_name.name if a.span else "const_" + str(i)
+                        arg_data["dim"] = data.shape
+                        arg_data["hash_value"] = hash(a)
+                        arg_data["index"] = 0
+                        arg_data["q_param"] = q_params[i + j]
+                        arg_data["data"] = data.tolist()
+                    input_data.append(arg_data)
+                continue
+            input_data.append(arg_data)
+        layer_data["inputs"] = input_data
+
+        # output tensor
+        output_data = []
+        o_shape = infer_shape(call)
+        if isinstance(o_shape, (tuple, list)):
+            data = collections.OrderedDict()
+            data["name"] = ""
+            data["dim"] = list(o_shape)
+            data["is_const"] = 0
+            output_data.append(data)
+        else:
+            for i in range(len(o_shape.fields)):
+                data = collections.OrderedDict()
+                data["name"] = ""
+                data["dim"] = list(o_shape.fields[i].concrete_shape)
+                data["is_const"] = 0
+                output_data.append(data)
+        layer_data["outputs"] = output_data
+
+        self.qnn_data["layers"].append(layer_data)
+
+
 @function_pass(opt_level=1)
 class QNNDumpToJson:
     """Dump qnn ir into json file."""
@@ -656,113 +776,22 @@ class QNNDumpToJson:
     def transform_function(self, func, mod, ctx):
         """Helper function to convert qnn ir."""
         func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
-        class_obj = self
 
-        class DumpToJson(relay.ExprVisitor):
-            """Internal helper class to dump json."""
-
-            def __init__(self):
-                super().__init__()
-                self.qnn_json = collections.OrderedDict([("input_names", []), ("layers", [])])
-
-            def visit_var(self, var):
-                self.qnn_json["input_names"].append(var.name_hint)
-
-            def visit_call(self, call):
-                _ = [self.visit(arg) for arg in call.args]
-                call_attrs = _qnn_attrs(call.attrs)
-
-                layer_data = collections.OrderedDict()
-                layer_data["op_type"] = call.op.name
-                layer_data["layer_name"] = call_attrs.pop("layer_name")
-
-                q_params = call_attrs.pop("q_params")
-                layer_data["attrs"] = collections.OrderedDict(sorted(call_attrs.items()))
-
-                input_data = []
-                for i, arg in enumerate(call.args):
-                    arg_data = collections.OrderedDict()
-                    if isinstance(arg, Var):
-                        arg_data["name"] = arg.name_hint
-                        arg_data["dim"] = infer_shape(arg)
-                        arg_data["hash_value"] = hash(arg)
-                        arg_data["index"] = 0
-                        arg_data["q_param"] = q_params[i]
-                    elif isinstance(arg, Call):
-                        arg_data["name"] = arg.attrs.layer_name
-                        arg_data["dim"] = infer_shape(arg)
-                        arg_data["hash_value"] = hash(arg)
-                        arg_data["index"] = 0
-                        arg_data["q_param"] = q_params[i]
-                    elif isinstance(arg, TupleGetItem):
-                        true_call = arg.tuple_value
-                        arg_data["name"] = true_call.attrs.layer_name
-                        arg_data["dim"] = infer_shape(true_call).fields[arg.index].concrete_shape
-                        arg_data["hash_value"] = hash(true_call)
-                        arg_data["index"] = arg.index
-                        arg_data["q_param"] = q_params[i]
-                    elif isinstance(arg, Constant):
-                        data = arg.data.numpy()
-                        arg_data["name"] = (
-                            arg.span.source_name.name if arg.span else "const_" + str(i)
-                        )
-                        arg_data["dim"] = data.shape
-                        arg_data["hash_value"] = hash(arg)
-                        arg_data["index"] = 0
-                        arg_data["q_param"] = q_params[i]
-                        arg_data["data"] = data.tolist()
-                    elif isinstance(arg, Tuple):
-                        for j, a in enumerate(arg):
-                            if isinstance(a, Var):
-                                arg_data["name"] = a.name_hint
-                                arg_data["dim"] = infer_shape(a)
-                                arg_data["hash_value"] = hash(a)
-                                arg_data["index"] = 0
-                                arg_data["q_param"] = q_params[i + j]
-                            elif isinstance(a, Call):
-                                arg_data["name"] = a.attrs.layer_name
-                                arg_data["dim"] = infer_shape(a)
-                                arg_data["hash_value"] = hash(a)
-                                arg_data["index"] = 0
-                                arg_data["q_param"] = q_params[i + j]
-                            elif isinstance(a, TupleGetItem):
-                                true_call = a.tuple_value
-                                arg_data["name"] = true_call.attrs.layer_name
-                                arg_data["dim"] = (
-                                    infer_shape(true_call).fields[a.index].concrete_shape
-                                )
-                                arg_data["hash_value"] = hash(true_call)
-                                arg_data["index"] = a.index
-                                arg_data["q_param"] = q_params[i + j]
-                            elif isinstance(a, Constant):
-                                data = a.data.numpy()
-                                arg_data["name"] = (
-                                    a.span.source_name.name if a.span else "const_" + str(i)
-                                )
-                                arg_data["dim"] = data.shape
-                                arg_data["hash_value"] = hash(a)
-                                arg_data["index"] = 0
-                                arg_data["q_param"] = q_params[i + j]
-                                arg_data["data"] = data.tolist()
-                    input_data.append(arg_data)
-                layer_data["inputs"] = input_data
-                self.qnn_json["layers"].append(layer_data)
-
-        dtj = DumpToJson()
+        dtj = QNNConvertDict()
         dtj.visit(func)
-        with open(class_obj.tofile, "w") as f:
+        with open(self.tofile, "w") as f:
             try:
                 import jsbeautifier
 
                 options = jsbeautifier.default_options()
                 options.indent_size = 2
-                res = jsbeautifier.beautify(json.dumps(dtj.qnn_json), options)
+                res = jsbeautifier.beautify(json.dumps(dtj.qnn_data), options)
                 f.write(res)
             except ImportError:
                 logging.warning(
                     "Recommend installing jsbeautifier to get better formatted JSON file."
                 )
-                json.dump(dtj.qnn_json, f, indent=2)
+                json.dump(dtj.qnn_data, f, indent=2)
         return func
 
 
@@ -885,47 +914,59 @@ class QNNCheckValidQuantParams:
                 # deal with case 1
                 for idx, q_param in enumerate(call_attrs["q_params"]):
                     if is_invalid_q_params(q_param):
-                        if call.op.name in csi_op().conv_handle and idx == 2:
+                        if (
+                            call.op.name in [*csi_op().conv_handle.keys(), "qnn.csi.dense"]
+                            and idx == 2
+                        ):
                             # ignore bias
                             continue
                         self.no_complete_quant_param.append(call_attrs["layer_name"])
                         break
 
                 # deal with case 2
+                q_param_idx = 0
                 for i, arg in enumerate(call.args):
                     if isinstance(arg, (Constant, Var)):
-                        pass
+                        q_param_idx += 1
                     elif isinstance(arg, Call):
                         arg_attrs = _qnn_attrs(arg.attrs)
-                        if tuple(call_attrs["q_params"][i]) != tuple(arg_attrs["q_params"][-1]):
+                        if tuple(call_attrs["q_params"][q_param_idx]) != tuple(
+                            arg_attrs["q_params"][-1]
+                        ):
                             self.mismatch.append(call_attrs["layer_name"])
                             break
+                        q_param_idx += 1
                     elif isinstance(arg, TupleGetItem):
                         true_arg = arg.tuple_value
                         true_arg_in_num, _ = get_qnn_call_io_num(true_arg)
                         pre_attrs = _qnn_attrs(true_arg.attrs)
                         if tuple(pre_attrs["q_params"][true_arg_in_num + arg.index]) != tuple(
-                            call_attrs["q_params"][i]
+                            call_attrs["q_params"][q_param_idx]
                         ):
                             self.mismatch.append(call_attrs["layer_name"])
+                            break
+                        q_param_idx += 1
                     elif isinstance(arg, Tuple):
-                        for a in arg:
+                        for j, a in enumerate(arg):
                             if isinstance(a, TupleGetItem):
                                 true_a = a.tuple_value
                                 true_a_in_num, _ = get_qnn_call_io_num(true_a)
-                                true_a_attrs = _qnn_attrs(true_a)
+                                true_a_attrs = _qnn_attrs(true_a.attrs)
                                 if tuple(
                                     true_a_attrs["q_params"][true_a_in_num + a.index]
-                                ) != tuple(call_attrs["q_params"][i]):
+                                ) != tuple(call_attrs["q_params"][q_param_idx + j]):
                                     self.mismatch.append(call_attrs["layer_name"])
                                     break
                             elif isinstance(a, Call):
                                 a_attrs = _qnn_attrs(a.attrs)
-                                if tuple(call_attrs["q_params"][i]) != tuple(
+                                if tuple(call_attrs["q_params"][q_param_idx + j]) != tuple(
                                     a_attrs["q_params"][-1]
                                 ):
                                     self.mismatch.append(call_attrs["layer_name"])
                                     break
+                        q_param_idx += len(arg)
+                    else:
+                        q_param_idx += 1
 
                 # deal with case 3
                 in_num = 0
@@ -941,7 +982,10 @@ class QNNCheckValidQuantParams:
                         if tuple(call_attrs["q_params"][i]) != tuple(call_attrs["q_params"][-1]):
                             self.not_meet_restrict.append(call_attrs["layer_name"])
                             break
-                elif call.op.name in class_obj.qnn_spec.in2out:
+                elif (
+                    call.op.name in class_obj.qnn_spec.in2out
+                    and call.op.name not in class_obj.qnn_spec.ignore_check
+                ):
                     assert in_num == 1, f"The num of input should be 1, but get {in_num}"
                     for i in range(out_num):
                         if tuple(call_attrs["q_params"][in_num + i]) != tuple(
@@ -968,3 +1012,180 @@ class QNNCheckValidQuantParams:
             )
 
         return func
+
+
+@function_pass(opt_level=1)
+class QNNConvertReshapeToFlatten:
+    """Convert reshape into flatten.
+
+    .. code-block:: text
+
+        input(n, 3, 2, 2) -> reshape(n, 12) -> output(n, 12)
+
+    Or
+
+    .. code-block:: text
+
+        input(n, 3, 2, 2) -> reshape(n, -1) -> output(n, 12)
+
+    Would become:
+
+    .. code-block:: text
+
+        input(n, 3, 2, 2) -> flatten -> output(n, 12)
+
+    """
+
+    def transform_function(self, func, mod, ctx):
+        """Helper function to convert qnn ir."""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+
+        class InterHelper(relay.ExprMutator):
+            """Helper class"""
+
+            def visit_call(self, call):
+                op_args = [self.visit(arg) for arg in call.args]
+                call_attrs = _qnn_attrs(call.attrs)
+
+                if call.op.name == "qnn.csi.reshape":
+                    in_shape = infer_shape(op_args[0])
+                    newshape = call_attrs["newshape"]
+                    if len(newshape) == 2 and in_shape[0] == newshape[0]:
+                        new_call = relay.qnn.op.csi_flatten(
+                            op_args[0],
+                            out_dtype=call_attrs["out_dtype"],
+                            q_params=call_attrs["q_params"],
+                            layer_name=call_attrs["layer_name"],
+                        )
+                        return new_call
+                return csi_op().all_handle[call.op.name](*op_args, **call_attrs)
+
+        return InterHelper().visit(func)
+
+
+@function_pass(opt_level=1)
+class QNNFuseConvDepthtospace:
+    """Fuse conv2d+depth2space into deconv."""
+
+    def transform_function(self, func, mod, ctx):
+        """Helper function to convert qnn ir."""
+        func = relay.Function(func.params, func.body, None, func.type_params, func.attrs)
+
+        class InterHelper(DFPatternCallback):
+            """Helper class"""
+
+            def __init__(self, require_type=False, rewrite_once=False):
+                super().__init__(require_type, rewrite_once)
+
+                self.input = wildcard()
+                self.weight = is_constant()
+                self.bias = is_constant()
+                self.conv = is_op("qnn.csi.conv2d")(self.input, self.weight, self.bias).has_attr(
+                    {"strides": [1, 1], "groups": 1}
+                )
+                self.d2s = is_op("qnn.csi.depth_to_space")(self.conv)
+
+                self.pattern = self.d2s
+
+            def callback(self, pre, post, node_map) -> RelayExpr:
+                in_call = node_map[self.input][0]
+
+                weight = node_map[self.weight][0]
+                bias = node_map[self.bias][0]
+                conv_call = node_map[self.conv][0]
+
+                d2s_call = node_map[self.d2s][0]
+
+                conv_attrs = _qnn_attrs(conv_call.attrs)
+                d2s_attrs = _qnn_attrs(d2s_call.attrs)
+                block_size = d2s_attrs["block_size"]
+
+                hk, wk = conv_attrs["kernel_size"]
+                deconv_kernel_size = [hk * block_size, wk * block_size]
+                deconv_strides = [block_size, block_size]
+                deconv_pad = [
+                    (hk - 1 - conv_attrs["padding"][2]) * block_size,
+                    (wk - 1 - conv_attrs["padding"][3]) * block_size,
+                    (hk - 1 - conv_attrs["padding"][0]) * block_size,
+                    (wk - 1 - conv_attrs["padding"][1]) * block_size,
+                ]
+
+                Fk, Pk, Hk, Wk = infer_shape(weight)
+                Fk_deconv = Fk // (block_size * block_size)
+                Pk_deconv = Pk
+                Hk_deconv = Hk * block_size
+                Wk_deconv = Wk * block_size
+                weight_data = weight.data.numpy()
+                # flip weight in x, y
+                flipped_weight_data = np.zeros(weight_data.shape, dtype=weight_data.dtype)
+                for f in range(Fk):
+                    for c in range(Pk):
+                        for h in range(Hk):
+                            for w in range(Wk):
+                                flipped_weight_data[f, c, h, w] = weight_data[
+                                    f, c, Hk - 1 - h, Wk - 1 - w
+                                ]
+
+                # interleave the weight
+                interleaved_weight_data = np.zeros(weight_data.shape, dtype=weight_data.dtype)
+                for f in range(Fk):
+                    for c in range(Pk):
+                        for h in range(Hk):
+                            for w in range(Wk):
+                                idx = (f % Fk_deconv) * block_size * block_size + f // Fk_deconv
+                                interleaved_weight_data[idx, c, h, w] = flipped_weight_data[
+                                    f, c, h, w
+                                ]
+
+                #  combine weight into deconv weight
+                deconv_weight_data_oihw = np.zeros(
+                    (Fk_deconv, Pk_deconv, Hk_deconv, Wk_deconv), dtype=weight_data.dtype
+                )
+                for f in range(Fk):
+                    for c in range(Pk):
+                        for h in range(Hk):
+                            for w in range(Wk):
+                                deconv_weight_data_oihw[
+                                    f // (block_size * block_size),
+                                    c,
+                                    h * block_size + f // block_size % block_size,
+                                    w * block_size + f % block_size,
+                                ] = interleaved_weight_data[f, c, h, w]
+
+                deconv_weight_data_iohw = np.transpose(deconv_weight_data_oihw, (1, 0, 2, 3))
+                deconv_weight = relay.const(deconv_weight_data_iohw)
+
+                bias_data = bias.data.numpy()
+                if isinstance(bias_data.tolist(), float) and math.isclose(bias_data.tolist(), 0.0):
+                    deconv_bias = bias
+                else:
+                    interleaved_bias_data = np.zeros(bias_data.shape, bias_data.dtype)
+                    for f in range(Fk):
+                        idx = (f % Fk_deconv) * (block_size * block_size) + f // Fk_deconv
+                        interleaved_bias_data[idx] = bias_data[f]
+                    deconv_bias = relay.const(interleaved_bias_data)
+
+                deconv_call = relay.qnn.op.csi_deconv2d(
+                    in_call,
+                    deconv_weight,
+                    deconv_bias,
+                    strides=deconv_strides,
+                    padding=deconv_pad,
+                    dilation=(1, 1),
+                    groups=1,
+                    channels=Fk_deconv,
+                    kernel_size=deconv_kernel_size,
+                    data_layout="NCHW",
+                    kernel_layout="IOHW",
+                    out_layout="",
+                    output_padding=(0, 0),
+                    out_dtype="float32",
+                    q_params=conv_attrs["q_params"],
+                    layer_name="deconv_" + conv_attrs["layer_name"],
+                )
+                return deconv_call
+
+        out = rewrite(InterHelper(), mod["main"].body)
+        res = tvm.IRModule.from_expr(out)
+
+        return res["main"]

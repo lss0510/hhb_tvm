@@ -19,12 +19,7 @@
 Simulate the imported model in x86.
 """
 import logging
-import tarfile
-import tempfile
 import os
-import yaml
-
-import numpy as np
 
 import tvm
 from tvm import runtime
@@ -44,7 +39,6 @@ from .core.common import (
     HHBException,
     ensure_dir,
     AttributeDict,
-    print_top5,
     generate_config_file,
     ALL_ARGUMENTS_DESC,
     collect_arguments_info,

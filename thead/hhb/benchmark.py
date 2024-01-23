@@ -19,20 +19,16 @@
 Simulate the imported model in x86.
 """
 import logging
-import tarfile
-import tempfile
 import os
-import yaml
 import time
 
 import numpy as np
 
 import tvm
-from tvm import runtime
 from tvm.contrib import graph_executor
 
 from .core.frontend_manage import import_model
-from .core.common import hhb_register_parse, print_top5, HHBException, ensure_dir, AttributeDict
+from .core.common import hhb_register_parse, HHBException, ensure_dir, AttributeDict
 from .core.common import generate_config_file, ALL_ARGUMENTS_DESC, collect_arguments_info
 from .core.arguments_manage import (
     add_preprocess_argument,
@@ -52,7 +48,6 @@ from .core.hhbir_manage import (
     HHBFloatCodegenIR,
     HHBX86QnnCodegenIR,
     get_input_info_from_relay,
-    get_output_info_from_relay,
 )
 from .core.quantization_manage import (
     collect_quantization_config,

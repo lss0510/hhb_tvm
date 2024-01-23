@@ -87,12 +87,8 @@ bool QnnCSIDenseRel(const Array<Type>& types, int num_inputs, const Attrs& attrs
     oshape.Set((oshape.size() - 1), transpose_b ? wshape[0] : wshape[1]);
   }
 
-  DataType out_dtype = param->out_dtype;
-  if (out_dtype.bits() == 0) {
-    out_dtype = tensor_a->dtype;
-  }
   // assign output type
-  reporter->Assign(types[3], TensorType(oshape, out_dtype));
+  reporter->Assign(types[3], TensorType(oshape, tensor_a->dtype));
   return true;
 }
 

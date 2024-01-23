@@ -25,12 +25,8 @@ cmake ..
 make -j16
 cd -
 
+# pyinstaller package
 cd thead
-python3 setup.py bdist_wheel
-cd ../python
-python3 setup.py bdist_wheel --plat-name=manylinux1_x86_64
-
-cd ../thead
 rm dist -rf
 rm build -rf
 pyinstaller ../scripts/hhb.spec

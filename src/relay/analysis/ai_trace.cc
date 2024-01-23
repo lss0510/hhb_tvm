@@ -35,7 +35,7 @@
 #include "../transforms/pattern_utils.h"
 #include "get_aitrace_data.h"
 #include "profiler_parser.h"
-
+#include "qnn_aitrace_data.h"
 namespace tvm {
 namespace relay {
 
@@ -146,8 +146,24 @@ Array<AiTraceDataFrame> GetAiTraceData(const Expr& expr, const tvm::Target& targ
   return result;
 }
 
-TVM_REGISTER_GLOBAL("relay.analysis.GetAiTraceData").set_body_typed(GetAiTraceData);
+Array<AiTraceDataFrame> QnnAiTraceData(const Expr& expr, const tvm::Target& target) {
+  CHECK(target.defined()) << "target is empty, please set tvm::Target.";
+  Array<String> type = target->GetAttr<Array<String>>("type", Array<String>({""})).value();
+  String path = target->GetAttr<String>("path", String("")).value();
 
+  AiTraceCounter atc = AiTraceCounter(type);
+  Array<AiTraceDataFrame> result = atc.GetAiTraceData(expr);
+
+  if (path != "") {
+    AiTraceData atdata = QnnConvert2ATData(result);
+    atdata.ToFile(path);
+  }
+
+  return result;
+}
+
+TVM_REGISTER_GLOBAL("relay.analysis.GetAiTraceData").set_body_typed(GetAiTraceData);
+TVM_REGISTER_GLOBAL("relay.analysis.QnnAiTraceData").set_body_typed(QnnAiTraceData);
 }  // namespace aitrace
 }  // namespace relay
 }  // namespace tvm

@@ -46,12 +46,12 @@ All arguments are listed as follows:
 | --reorder-pixel-format | None | False | If original model's input data pixel format is rgb, then covert it to bgr;otherwise, then convert it to rgb. |
 | --board | ['th1520', "e907", 'c906', 'c908', 'c920', "c920v2", 'x86_ref', 'unset'] | unset | Set target device, default is unset. |
 | -cd, --calibrate-dataset | None | None | Provide with dataset for the input of model in reference step. Support dir or .npz .jpg .png .JPEG or .txt in which there are path of images. Note: only one image path in one line if .txt. |
-| --quantization-scheme | ['int4_asym_w_sym', 'uint8_asym', 'int8_asym', 'int8_sym', 'int8_original', 'int8_asym_w_sym', 'int16_sym', 'float16', 'bfloat16', 'float32', 'unset'] | unset | Scheme of quantization. default is unset, and select scheme by --board. |
+| --quantization-scheme | ['int4_asym_w_sym', 'uint8_asym', 'int8_asym', 'int8_sym', 'int8_original', 'int8_asym_w_sym', 'int16_sym', 'float16', 'float32', 'unset'] | unset | Scheme of quantization. default is unset, and select scheme by --board. |
 | --auto-hybrid-quantization | None | False | If set, quantize model automatically. |
 | --quantization-loss-algorithm | ['cos_similarity', 'mse', 'kl_divergence', 'cross_entropy', 'gini'] | cos_similarity | How to calculate accuracy loss for every layer. |
 | --quantization-loss-threshold | None | 0.99 | The threshold that will determin thich layer will be quantized with hybrid way.If it is None, we will select threshold automatically. |
 | --dump-quantization-loss | None | False | If set, dump quantizaiton loss into file. |
-| --hybrid-quantization-scheme | ['int4_asym_w_sym', 'uint8_asym', 'int8_asym', 'int8_sym', 'int8_original', 'int8_asym_w_sym', 'int16_sym', 'float16', 'bfloat16', 'unset'] | unset | Scheme of hybrid quantization. default is unset. |
+| --hybrid-quantization-scheme | ['int4_asym_w_sym', 'uint8_asym', 'int8_asym', 'int8_sym', 'int8_original', 'int8_asym_w_sym', 'int16_sym', 'float16', 'unset'] | unset | Scheme of hybrid quantization. default is unset. |
 | --hybrid-layer-name | None | None | Layer buffer name to use hybrid quantization. |
 | --fuse-conv-relu | None | False | Fuse the convolution and relu layer. |
 | --fuse-reshape-dense | None | False | Fuse the reshape and dense layer. |
@@ -76,7 +76,6 @@ All arguments are listed as follows:
 | --input-memory-type | [0, 1, 2] | None | Set the memory type for input tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
 | --output-memory-type | [0, 1, 2] | None | Set the memory type for output tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
 | --memory-type | [0, 1, 2] | None | Set the memory type for input and output tensors. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
-| --dynamic-cb-reg | None | False | Emit cb_map file to reduce elf size on RTOS. |
 
 ### 1.2 Multi-stages command
 
@@ -116,12 +115,12 @@ All arguments are listed as follows:
 | --pixel-format | ['RGB', 'BGR'] | RGB | The pixel format of image data, defalut is RGB |
 | --add-preprocess-node | None | False | Add preprocess node for model. |
 | -cd, --calibrate-dataset | None | None | Provide with dataset for the input of model in reference step. Support dir or .npz .jpg .png .JPEG or .txt in which there are path of images. Note: only one image path in one line if .txt. |
-| --quantization-scheme | ['int4_asym_w_sym', 'uint8_asym', 'int8_asym', 'int8_sym', 'int8_original', 'int8_asym_w_sym', 'int16_sym', 'float16', 'bfloat16', 'float32', 'unset'] | unset | Scheme of quantization. default is unset, and select scheme by --board. |
+| --quantization-scheme | ['int4_asym_w_sym', 'uint8_asym', 'int8_asym', 'int8_sym', 'int8_original', 'int8_asym_w_sym', 'int16_sym', 'float16', 'float32', 'unset'] | unset | Scheme of quantization. default is unset, and select scheme by --board. |
 | --auto-hybrid-quantization | None | False | If set, quantize model automatically. |
 | --quantization-loss-algorithm | ['cos_similarity', 'mse', 'kl_divergence', 'cross_entropy', 'gini'] | cos_similarity | How to calculate accuracy loss for every layer. |
 | --quantization-loss-threshold | None | 0.99 | The threshold that will determin thich layer will be quantized with hybrid way.If it is None, we will select threshold automatically. |
 | --dump-quantization-loss | None | False | If set, dump quantizaiton loss into file. |
-| --hybrid-quantization-scheme | ['int4_asym_w_sym', 'uint8_asym', 'int8_asym', 'int8_sym', 'int8_original', 'int8_asym_w_sym', 'int16_sym', 'float16', 'bfloat16', 'unset'] | unset | Scheme of hybrid quantization. default is unset. |
+| --hybrid-quantization-scheme | ['int4_asym_w_sym', 'uint8_asym', 'int8_asym', 'int8_sym', 'int8_original', 'int8_asym_w_sym', 'int16_sym', 'float16', 'unset'] | unset | Scheme of hybrid quantization. default is unset. |
 | --hybrid-layer-name | None | None | Layer buffer name to use hybrid quantization. |
 | --fuse-conv-relu | None | False | Fuse the convolution and relu layer. |
 | --fuse-reshape-dense | None | False | Fuse the reshape and dense layer. |
@@ -136,7 +135,6 @@ All arguments are listed as follows:
 | --input-memory-type | [0, 1, 2] | None | Set the memory type for input tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
 | --output-memory-type | [0, 1, 2] | None | Set the memory type for output tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
 | --memory-type | [0, 1, 2] | None | Set the memory type for input and output tensors. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
-| --dynamic-cb-reg | None | False | Emit cb_map file to reduce elf size on RTOS. |
 | --config-file | None | None | Configue more complex parameters for executing the model. |
 | --generate-config | None | False | Generate  config file |
 | -o, --output | None | hhb_out | The directory that holds the outputs. |
@@ -160,7 +158,6 @@ All arguments are listed as follows:
 | --input-memory-type | [0, 1, 2] | None | Set the memory type for input tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
 | --output-memory-type | [0, 1, 2] | None | Set the memory type for output tensor, support for multi-values. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
 | --memory-type | [0, 1, 2] | None | Set the memory type for input and output tensors. 0: allocated by CPU and not aligned; 1: allocated by CPU and aligned; 2: dma buffer. |
-| --dynamic-cb-reg | None | False | Emit cb_map file to reduce elf size on RTOS. |
 | --config-file | None | None | Configue more complex parameters for executing the model. |
 | --generate-config | None | False | Generate  config file |
 | -o, --output | None | hhb_out | The directory that holds the outputs. |

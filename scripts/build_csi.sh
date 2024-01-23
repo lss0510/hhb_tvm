@@ -24,6 +24,8 @@ SRC_BASE=$PWD
 cd ../csi-nn2/
 
 make nn2_ref_x86
+make nn2_pnna_x86
+make nn2_th1520
 make nn2_c906
 make nn2_c908
 make nn2_c920

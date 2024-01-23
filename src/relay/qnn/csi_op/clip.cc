@@ -46,7 +46,7 @@ bool QnnCSIClipRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
   const auto param = attrs.as<QnnCSIClipAttrs>();
   CHECK(param != nullptr);
 
-  reporter->Assign(types[1], TensorType(data->shape, param->out_dtype));
+  reporter->Assign(types[1], TensorType(data->shape, data->dtype));
   return true;
 }
 

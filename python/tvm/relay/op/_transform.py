@@ -38,7 +38,8 @@ _reg.register_broadcast_schedule("repeat")
 _reg.register_broadcast_schedule("tile")
 _reg.register_broadcast_schedule("where")
 _reg.register_injective_schedule("squeeze")
-_reg.register_injective_schedule("reshape")
+# _reg.register_injective_schedule("reshape")
+_reg.register_strategy("reshape", strategy.reshape_strategy)
 _reg.register_injective_schedule("reshape_like")
 _reg.register_injective_schedule("full")
 _reg.register_injective_schedule("full_like")
@@ -75,6 +76,7 @@ def compute_concat(attrs, inputs, output_type):
 
 _reg.register_strategy("concatenate", strategy.concatenate_strategy)
 
+
 # sliding_window
 @_reg.register_compute("sliding_window")
 def compute_sliding_window(attrs, inputs, output_type):
@@ -83,6 +85,7 @@ def compute_sliding_window(attrs, inputs, output_type):
 
 
 _reg.register_strategy("sliding_window", strategy.sliding_window_strategy)
+
 
 # strided_set
 @_reg.register_compute("strided_set")
@@ -94,7 +97,8 @@ def compute_strided_set(attrs, inputs, output_type):
 _reg.register_injective_schedule("strided_set")
 
 # layout_transform
-_reg.register_injective_schedule("layout_transform")
+# _reg.register_injective_schedule("layout_transform")
+_reg.register_strategy("layout_transform", strategy.layout_transform_strategy)
 _reg.register_pattern("layout_transform", OpPattern.INJECTIVE)
 _reg.register_injective_schedule("auto_scheduler_layout_transform")
 _reg.register_pattern("auto_scheduler_layout_transform", OpPattern.INJECTIVE)
@@ -104,6 +108,7 @@ _reg.register_pattern("meta_schedule_layout_transform", OpPattern.INJECTIVE)
 # argwhere
 _reg.register_strategy("argwhere", strategy.argwhere_strategy)
 
+
 # scatter
 @_reg.register_compute("scatter")
 def compute_scatter(attrs, inputs, output_type):
@@ -112,6 +117,7 @@ def compute_scatter(attrs, inputs, output_type):
 
 
 _reg.register_strategy("scatter", strategy.scatter_strategy)
+
 
 # sparse_fill_empty_rows
 @_reg.register_compute("sparse_fill_empty_rows")
@@ -131,6 +137,7 @@ def compute_sparse_fill_empty_rows(attrs, inputs, output_type):
 
 _reg.register_strategy("sparse_fill_empty_rows", strategy.sparse_fill_empty_rows_strategy)
 
+
 # sparse_reshape
 @_reg.register_compute("sparse_reshape")
 def compute_reshape(attrs, inputs, output_type):
@@ -146,6 +153,7 @@ def compute_reshape(attrs, inputs, output_type):
 
 
 _reg.register_strategy("sparse_reshape", strategy.sparse_reshape_strategy)
+
 
 # stft
 @_reg.register_compute("stft")
@@ -200,6 +208,7 @@ def compute_scatter_add(attrs, inputs, output_type):
 
 _reg.register_strategy("scatter_add", strategy.scatter_add_strategy)
 
+
 # scatter_nd
 @_reg.register_compute("scatter_nd")
 def compute_scatter_nd(attrs, inputs, output_type):
@@ -208,6 +217,7 @@ def compute_scatter_nd(attrs, inputs, output_type):
 
 
 _reg.register_strategy("scatter_nd", strategy.scatter_nd_strategy)
+
 
 # cumsum
 @_reg.register_compute("cumsum")
@@ -218,6 +228,7 @@ def compute_cumsum(attrs, inputs, output_type):
 
 _reg.register_strategy("cumsum", strategy.cumsum_strategy)
 _reg.register_shape_func("cumsum", False, elemwise_shape_func)
+
 
 # cumprod
 @_reg.register_compute("cumprod")
@@ -682,7 +693,6 @@ _reg.register_shape_func("scatter_nd", False, elemwise_shape_func)
 
 @script
 def _sparse_fill_empty_rows_shape_func(sparse_indices, dense_shape):
-
     new_sparse_indices_shape = output_tensor((2,), "int64")
     new_sparse_values_shape = output_tensor((1,), "int64")
     empty_row_indicator_shape = output_tensor((1,), "int64")

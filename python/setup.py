@@ -224,7 +224,7 @@ extras_require = {
     piece: deps for piece, (_, deps) in requirements.items() if piece not in ("all", "core")
 }
 
-__version__ = "2.6.0"
+__version__ = "2.8.1"
 
 setup(
     name="hhb-tvm",

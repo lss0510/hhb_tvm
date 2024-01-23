@@ -566,7 +566,9 @@ def load_lib(module_factory, output_dir):
     include_path1 = os.path.join(contrib_dir, "hhb", "install_nn2", "x86", "include", "csinn")
     include_path11 = os.path.join(contrib_dir, "hhb", "install_nn2", "x86", "include", "shl_public")
     ref_x86_dir0 = os.path.join(source_dir, "install_nn2", "x86", "lib")  # for source
-    ref_x86_dir1 = os.path.join(contrib_dir, "hhb", "install_nn2", "x86", "lib")  # for package binary
+    ref_x86_dir1 = os.path.join(
+        contrib_dir, "hhb", "install_nn2", "x86", "lib"
+    )  # for package binary
     lib_path = os.path.join(output_dir, "quant.so")
     kwargs = {}
     kwargs["options"] = [
@@ -661,13 +663,17 @@ def inference_constant_node(dataset, layer_name, quant_config, tensor_type="acti
     call_data = []
     if tensor_type == "activate":
         new_data = [d[0] for d in dataset]
-        quant_params = get_out_params(new_data)
+        quant_params = get_out_params(
+            new_data,
+            quant_config["calibrate_mode"],
+            quant_config["activate_quantized_type"],
+        )
         shape = dataset[0][0].shape
 
         for b in dataset:
             call_data.append({input_name: b[0]})
     else:
-        quant_params = get_weight_params(dataset)
+        quant_params = get_weight_params(dataset, quant_config)
         shape = dataset.shape
 
         call_data.append({input_name: dataset})

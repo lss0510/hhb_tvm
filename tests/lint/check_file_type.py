@@ -158,7 +158,6 @@ ALLOW_SPECIFIC_FILE = {
     "tests/thead/images/leftImg8bit.png",
     "tests/thead/images/n01440764_188.JPEG",
     "thead/caffe.proto",
-    "thead/cmd/config/thead.tp",
     "thead/cmd/config/th1520.tp",
     "docker/dockerfile.hhb_cpu",
     # microTVM tests

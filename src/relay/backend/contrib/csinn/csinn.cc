@@ -771,7 +771,20 @@ void CodegenCSINN::EmitSessionRun(void) {
        << "input_tensors[" << i << "], sess);";
     func_def_.OneLine(t0);
   }
-  func_def_.OneLine("csinn_session_run(sess);");
+  if (show_session_run_time) {
+    // init time params
+    func_def_.OneLine("uint64_t start_time, end_time;");
+    func_def_.OneLine("start_time = shl_get_timespec();");
+    func_def_.OneLine("csinn_session_run(sess);");
+    func_def_.OneLine("end_time = shl_get_timespec();");
+    func_def_.OneLine(
+        "printf(\"Session_run execution time: %.5fms, FPS=%.5f\\n\", ((float)(end_time - "
+        "start_time)) / 1000000,");
+    func_def_.OneLine("       1000000000.0 / ((float)(end_time - start_time)));");
+  } else {
+    func_def_.OneLine("csinn_session_run(sess);");
+  }
+
   func_def_.ExitScope();
   func_def_.OneLine("}");
 }
@@ -2040,6 +2053,11 @@ void CodegenCSINN::DeConv2d(const CallNode* call) {
     CreateConstantTensor(op, kernel, kernel_name, wshape, kernel_qinfo);
   }
   decl << ", " << kernel_name;
+  // fix kernel layout
+  auto kernel_tensor = op->get_tensor(kernel_name);
+  if (kernel_tensor->tensor->layout == CSINN_LAYOUT_OIHW) {
+    kernel_tensor->tensor->layout = CSINN_LAYOUT_IOHW;
+  }
 
   /* Emit bias tensor */
   visit(call->args[2]);
@@ -4220,7 +4238,7 @@ void CodegenCSINN::MatMul(const CallNode* call) {
   visit(call->args[1]);
   auto input2_qinfo = GetCallOPQuant(call, 1);
   if (call->args[1].as<CallNode>() || call->args[1].as<VarNode>() ||
-      call->args[0].as<TupleGetItemNode>()) {
+      call->args[1].as<TupleGetItemNode>()) {
     CHECK(out_.size() == 1) << "Every args expects a single out_";
     input2_name = CreateInputTensor(op, decl, call, 1, input2_qinfo);
   } else {

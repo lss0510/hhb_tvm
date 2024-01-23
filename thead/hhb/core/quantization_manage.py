@@ -22,15 +22,15 @@ import json
 import tvm
 from tvm import relay
 from tvm.relay.expr import Call, Constant
-from tvm.relay import quantize as qtz
-from tvm.relay.quantize.quantize_hhb import get_quantized_model
-from tvm.relay.quantize.auto_hybrid_quantize import HybridQuantizationInfo
+
+from tvm.relay.quantize.hhb_quantize import get_quantized_model, quantize_hhb
+from tvm.relay.quantize.quantization.hybird_quantize import HybridQuantizationInfo
 
 from .common import argument_filter_helper
 from .common import ALL_ARGUMENTS_INFO
 from .common import AttributeDict
 from .common import HHBException
-from .common import hhb_exit
+from .common import hhb_exit, hhb_deprecated_check
 
 
 # pylint: disable=invalid-name
@@ -134,7 +134,7 @@ def ignore_layers_from_auto_quant(module, board):
 
 def deprecated_check(args):
     if args.quantize_config.channel_quantization:
-        logger.error("--channel-quantization is deprecated.")
+        hhb_deprecated_check("--channel-quantization")
 
 
 def get_config_dict(args):
@@ -167,6 +167,8 @@ def get_config_dict(args):
         "convert_to_relay": args.quantize_config.convert_to_relay,
         "hybrid_quantization_scheme": args.quantize_config.hybrid_quantization_scheme,
         "hybrid_layer_name": args.quantize_config.hybrid_layer_name,
+        "h_sram_size": args.hardware_sram_size,
+        "h_max_groups": args.hardware_max_groups,
         "h_max_out_channel": args.hardware_max_out_channel,
         "h_max_kernel_size": args.hardware_max_kernel_size,
         "h_contain_weight": args.hardware_contain_weight,
@@ -188,12 +190,20 @@ def get_config_dict(args):
         "conv2d_algorithm": args.codegen_config.conv2d_algorithm,
         "ahead_of_time": args.codegen_config.ahead_of_time,
         "dynamic_shape": args.codegen_config.dynamic_shape,
+        "low_bound_scale": args.quantize_config.low_bound_scale,
+        "high_bound_scale": args.quantize_config.high_bound_scale,
+        "show_session_run_time": args.show_session_run_time,
     }
+    if args.quantize_config.low_bound_scale < 1:
+        hhb_exit("--low-bound-scale should be >= 1.")
+    if args.quantize_config.high_bound_scale <= 0 or args.quantize_config.high_bound_scale > 1:
+        hhb_exit("--high-bound-scale should be (0, 1].")
     th1520_input_fix_size = args.codegen_config.th1520_input_fix_size
     if len(th1520_input_fix_size) == 2:
         config_dict["th1520_input_fix_height"] = th1520_input_fix_size[0]
         config_dict["th1520_input_fix_width"] = th1520_input_fix_size[1]
 
+    config_dict["debug_level"] = "WARNING"
     if args.verbose >= 3:
         config_dict["debug_level"] = "INFO"
 
@@ -209,7 +219,6 @@ def get_config_dict(args):
         config_dict["channel_quantization"] = True
     else:
         config_dict["channel_quantization"] = False
-
     return config_dict
 
 
@@ -244,7 +253,6 @@ def set_quantize_params_by_board(filtered_args, extra=None):
             "weight_quantized_type": "asym",
             "activate_quantized_type": "asym",
             "weight_scale": "maxmin",
-            "fuse_conv_relu": False,
             "fuse_relu": False,
             # "fuse_reshape": False,
             "fuse_mul_add_to_conv": True,
@@ -283,8 +291,8 @@ def set_quantize_params_by_board(filtered_args, extra=None):
             raise HHBException(
                 f"Unsupport quantization scheme '{filtered_args.quantize_config.quantization_scheme}' on th1520\n"
             )
-        if filtered_args.quantize_config.quantization_scheme in ("float16", "bfloat16"):
-            raise HHBException("th1520 unsupport float16 or bfloat16\n")
+        if filtered_args.quantize_config.quantization_scheme in ("float16",):
+            raise HHBException("th1520 unsupport float16\n")
     elif filtered_args.board == "e907":
         new_values = {
             "num_bit_input": 8,
@@ -297,15 +305,12 @@ def set_quantize_params_by_board(filtered_args, extra=None):
             "weight_quantized_type": "asym",
             "activate_quantized_type": "asym",
             "weight_scale": "maxmin",
-            # "fuse_conv_relu": False,
             "fuse_relu": False,
             # "fuse_reshape": False,
             "fuse_mul_add_to_conv": True,
             # "channel_quantization": False,
             # "broadcast_quantization": False,
         }
-        if filtered_args.quantize_config.quantization_scheme == "unset":
-            new_values["quantization_scheme"] = "int8_asym_w_sym"
     elif filtered_args.board == "c906":
         new_values = {
             "num_bit_input": 16,
@@ -318,15 +323,12 @@ def set_quantize_params_by_board(filtered_args, extra=None):
             "weight_quantized_type": "sym",
             "activate_quantized_type": "sym",
             "weight_scale": "maxmin",
-            "fuse_conv_relu": False,
             "fuse_relu": False,
             # "fuse_reshape": False,
             "fuse_mul_add_to_conv": True,
             # "channel_quantization": False,
             # "broadcast_quantization": False,
         }
-        if filtered_args.quantize_config.quantization_scheme == "unset":
-            new_values["quantization_scheme"] = "float16"
     elif filtered_args.board == "rvm":
         new_values = {
             "num_bit_input": 16,
@@ -339,15 +341,12 @@ def set_quantize_params_by_board(filtered_args, extra=None):
             "weight_quantized_type": "sym",
             "activate_quantized_type": "sym",
             "weight_scale": "maxmin",
-            # "fuse_conv_relu": False,
             "fuse_relu": False,
             # "fuse_reshape": False,
             "fuse_mul_add_to_conv": True,
             # "channel_quantization": False,
             # "broadcast_quantization": False,
         }
-        if filtered_args.quantize_config.quantization_scheme == "unset":
-            new_values["quantization_scheme"] = "int8_asym_w_sym"
     elif filtered_args.board == "c908":
         new_values = {
             "num_bit_input": 8,
@@ -360,15 +359,12 @@ def set_quantize_params_by_board(filtered_args, extra=None):
             "weight_quantized_type": "asym",
             "activate_quantized_type": "asym",
             "weight_scale": "maxmin",
-            # "fuse_conv_relu": False,
             "fuse_relu": False,
             # "fuse_reshape": False,
             "fuse_mul_add_to_conv": True,
             # "channel_quantization": False,
             # "broadcast_quantization": False,
         }
-        if filtered_args.quantize_config.quantization_scheme == "unset":
-            new_values["quantization_scheme"] = "int8_asym_w_sym"
     elif filtered_args.board == "c920":
         new_values = {
             "num_bit_input": 16,
@@ -381,15 +377,12 @@ def set_quantize_params_by_board(filtered_args, extra=None):
             "weight_quantized_type": "sym",
             "activate_quantized_type": "sym",
             "weight_scale": "maxmin",
-            "fuse_conv_relu": False,
             "fuse_relu": False,
             # "fuse_reshape": False,
             "fuse_mul_add_to_conv": True,
             # "channel_quantization": False,
             # "broadcast_quantization": False,
         }
-        if filtered_args.quantize_config.quantization_scheme == "unset":
-            new_values["quantization_scheme"] = "float16"
     elif filtered_args.board == "c920v2":
         new_values = {
             "num_bit_input": 8,
@@ -402,15 +395,12 @@ def set_quantize_params_by_board(filtered_args, extra=None):
             "weight_quantized_type": "asym",
             "activate_quantized_type": "asym",
             "weight_scale": "maxmin",
-            # "fuse_conv_relu": False,
             "fuse_relu": False,
             # "fuse_reshape": False,
             "fuse_mul_add_to_conv": True,
             # "channel_quantization": False,
             # "broadcast_quantization": False,
         }
-        if filtered_args.quantize_config.quantization_scheme == "unset":
-            new_values["quantization_scheme"] = "int8_asym_w_sym"
     elif filtered_args.board == "x86_ref":
         new_values = {
             "num_bit_input": 8,
@@ -423,41 +413,16 @@ def set_quantize_params_by_board(filtered_args, extra=None):
             "weight_quantized_type": "asym",
             "activate_quantized_type": "asym",
             "weight_scale": "maxmin",
-            # "fuse_conv_relu": False,
             "fuse_relu": False,
             # "fuse_reshape": False,
             "fuse_mul_add_to_conv": True,
             # "channel_quantization": False,
             # "broadcast_quantization": False,
         }
-        if filtered_args.quantize_config.quantization_scheme == "unset":
-            new_values["quantization_scheme"] = "int8_asym"
     else:
-        new_values = {
-            "num_bit_input": 8,
-            "num_bit_weight": 8,
-            "num_bit_activation": 32,
-            "dtype_input": "int8",
-            "dtype_weight": "int8",
-            "dtype_activation": "int32",
-            # "calibrate_mode": "maxmin",
-            "weight_quantized_type": "asym",
-            "activate_quantized_type": "asym",
-            "weight_scale": "maxmin",
-            "fuse_conv_relu": False,
-            "fuse_relu": False,
-            # "fuse_reshape": False,
-            "fuse_mul_add_to_conv": True,
-            # "channel_quantization": False,
-            # "broadcast_quantization": False,
-        }
-        if filtered_args.quantize_config.quantization_scheme == "unset":
-            new_values["quantization_scheme"] = "int8_asym_w_sym"
+        raise HHBException("Unset --board\n")
 
-    if filtered_args.quantize_config.quantization_scheme == "unset":
-        if filtered_args.board == "unset":
-            raise HHBException("Unset --board and --quantization-scheme.\n")
-    elif filtered_args.quantize_config.quantization_scheme in ["int4_asym_w_sym"]:
+    if filtered_args.quantize_config.quantization_scheme in ["int4_asym_w_sym"]:
         new_values["num_bit_input"] = 4
         new_values["num_bit_weight"] = 4
         new_values["num_bit_activation"] = 32
@@ -533,15 +498,6 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         new_values["dtype_activation"] = "float16"
         new_values["activate_quantized_type"] = "sym"
         new_values["weight_quantized_type"] = "sym"
-    elif filtered_args.quantize_config.quantization_scheme == "bfloat16":
-        new_values["num_bit_input"] = 16
-        new_values["num_bit_weight"] = 16
-        new_values["num_bit_activation"] = 16
-        new_values["dtype_input"] = "bfloat16"
-        new_values["dtype_weight"] = "bfloat16"
-        new_values["dtype_activation"] = "bfloat16"
-        new_values["activate_quantized_type"] = "sym"
-        new_values["weight_quantized_type"] = "sym"
     elif filtered_args.quantize_config.quantization_scheme == "float32":
         new_values["num_bit_input"] = 32
         new_values["num_bit_weight"] = 32
@@ -552,7 +508,8 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         new_values["activate_quantized_type"] = "sym"
         new_values["weight_quantized_type"] = "sym"
     else:
-        raise HHBException("Unsupport quantization scheme.\n")
+        if "quantization_scheme" not in new_values:
+            raise HHBException("Unsupport quantization scheme.\n")
 
     if filtered_args.quantize_config.num_bit_input != 0:
         new_values["num_bit_input"] = filtered_args.quantize_config.num_bit_input
@@ -667,7 +624,7 @@ def quantize_model(mod, params, qconfig, dataset=None, target="x86_ref"):
         logger.debug(qconfig)
         _, _, qnn_dtypes = get_quant_scheme_from_qnn(mod)
         if qnn_dtypes:
-            qfunc = get_quantized_model(mod, params, target)
+            qfunc = get_quantized_model(mod, params, qconfig, target)
         else:
-            qfunc = qtz.quantize_hhb(mod, params, dataset=dataset, target=target)
+            qfunc = quantize_hhb(mod, params, qconfig, dataset=dataset, target=target)
     return qfunc

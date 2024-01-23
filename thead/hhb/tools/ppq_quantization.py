@@ -42,8 +42,9 @@ from ppq.api import load_onnx_graph, export_ppq_graph
 from ppq.core import RoundingPolicy, PASSIVE_OPERATIONS
 from ppq.scheduler import DISPATCHER_TABLE, GraphDispatcher
 from ppq.core.data import convert_any_to_torch_tensor
-from ppq.core import empty_ppq_cache
+from ppq.core import empty_ppq_cache, ppq_warning
 from ppq.api.setting import DispatchingTable, QuantizationSetting, QuantizationSettingFactory
+from ppq.quantization.optim import *
 
 from ..core.common import AttributeDict
 from ..core.arguments_manage import QuantizeArguments, ArgSpecHelper
@@ -208,7 +209,7 @@ class PPQFixedPointQuantizer(BaseQuantizer):
                     if operation.type == "ConvTranspose":
                         OQC.input_quantization_config[1].channel_axis = 1
 
-        elif operation.type in {"LayerNormalization"}:
+        elif operation.type in {"LayerNormalization", "Clip"}:
             # LayerNormalization only take input & output quantization, parameter shall not been quantized.
             for input_config in OQC.input_quantization_config[1:]:
                 input_config.state = QuantizationStates.FP32
@@ -235,6 +236,125 @@ class PPQFixedPointQuantizer(BaseQuantizer):
             # 'Mish',
             # 'LeakyRelu'
         }
+
+    def build_quant_pipeline(
+        self, setting: QuantizationSetting
+    ) -> QuantizationOptimizationPipeline:
+        assert isinstance(setting, QuantizationSetting), (
+            f"PPQ needs a OptimSetting instance to initialize optimization pipeline,"
+            f" however {type(setting)} was given."
+        )
+
+        if setting.matrix_factorization == True:
+            ppq_warning(
+                "PPQ Matrix Factorization Pass has been removed from QuantizationSetting since 0.6.5, this pass must be called manually now."
+            )
+            ppq_warning(
+                "PPQ Matrix Factorization Pass 已经不能通过 QuantizationSetting 调用，现在你必须手动调用该优化过程"
+            )
+
+        list_of_passes = []
+        if setting.ssd_equalization:
+            equalization_setting = setting.ssd_setting
+            list_of_passes.append(
+                SSDEqualizationPass(
+                    optimize_level=equalization_setting.opt_level,
+                    channel_ratio=equalization_setting.channel_ratio,
+                    loss_threshold=equalization_setting.loss_threshold,
+                    layer_norm=equalization_setting.layer_norm,
+                    iteration=equalization_setting.iteration,
+                )
+            )
+
+        if setting.fusion:
+            fusion_setting = setting.fusion_setting
+            list_of_passes.append(
+                QuantizeFusionPass(
+                    fuse_activation=fusion_setting.fuse_activation,
+                    fuse_passive_op=fusion_setting.fuse_passive_op,
+                    activation_type=self.activation_fusion_types,
+                )
+            )
+
+            if fusion_setting.remove_useless_quantization:
+                list_of_passes.append(QuantizeSimplifyPass())
+
+        if setting.quantize_parameter:
+            param_setting = setting.quantize_parameter_setting
+            list_of_passes.append(ParameterQuantizePass(method=param_setting.calib_algorithm))
+
+        if setting.quantize_activation:
+            act_setting = setting.quantize_activation_setting
+            list_of_passes.append(RuntimeCalibrationPass(method=act_setting.calib_algorithm))
+
+        if setting.fusion:
+            if fusion_setting.align_quantization:
+                list_of_passes.append(
+                    QuantAlignmentPass(
+                        elementwise_alignment=fusion_setting.align_elementwise_to,
+                        concat_alignment=fusion_setting.align_concat_to,
+                        pooling_alignment=fusion_setting.align_avgpooling_to,
+                        resize_alignment=fusion_setting.align_resize_to,
+                        force_overlap=fusion_setting.force_alignment_overlap,
+                    )
+                )
+
+        if setting.quantize_parameter:
+            param_setting = setting.quantize_parameter_setting
+            if param_setting.quantize_passive_parameter:
+                list_of_passes.append(PassiveParameterQuantizePass(process_clip=False))
+
+        if setting.bias_correct:
+            bias_correct_setting = setting.bias_correct_setting
+            list_of_passes.append(
+                BiasCorrectionPass(
+                    block_size=bias_correct_setting.block_size,
+                    interested_layers=bias_correct_setting.interested_layers,
+                    steps=bias_correct_setting.steps,
+                    collecting_device=bias_correct_setting.collecting_device,
+                )
+            )
+
+        if setting.lsq_optimization:
+            lsq_setting = setting.lsq_optimization_setting
+            list_of_passes.append(
+                LearnedStepSizePass(
+                    interested_layers=lsq_setting.interested_layers,
+                    lr=lsq_setting.lr,
+                    collecting_device=lsq_setting.collecting_device,
+                    steps=lsq_setting.steps,
+                    gamma=lsq_setting.gamma,
+                    is_scale_trainable=lsq_setting.is_scale_trainable,
+                    block_size=lsq_setting.block_size,
+                )
+            )
+            # requant passive parameters
+            list_of_passes.append(PassiveParameterQuantizePass(process_clip=False))
+
+        if setting.blockwise_reconstruction:
+            blockwise_reconstruction_setting = setting.blockwise_reconstruction_setting
+            list_of_passes.append(
+                AdaroundPass(
+                    interested_layers=blockwise_reconstruction_setting.interested_layers,
+                    lr=blockwise_reconstruction_setting.lr,
+                    collecting_device=blockwise_reconstruction_setting.collecting_device,
+                    steps=blockwise_reconstruction_setting.steps,
+                    gamma=blockwise_reconstruction_setting.gamma,
+                    is_scale_trainable=blockwise_reconstruction_setting.is_scale_trainable,
+                    block_size=blockwise_reconstruction_setting.block_size,
+                )
+            )
+            # requant passive parameters
+            list_of_passes.append(PassiveParameterQuantizePass())
+
+        if setting.quantize_parameter:
+            if param_setting.baking_parameter:
+                list_of_passes.append(ParameterBakingPass())
+
+        if setting.extension:
+            list_of_passes.append(ExtensionPass(setting.extension_setting.my_first_parameter))
+
+        return QuantizationOptimizationPipeline(passes=list_of_passes)
 
 
 def dispatch_hhb_graph(
@@ -461,9 +581,12 @@ def create_ppq_quantization_setting(
     ppq_qs.lsq_optimization = hhb_config.lsq
     ppq_qs.lsq_optimization_setting.steps = hhb_config.lsq_steps
     ppq_qs.lsq_optimization_setting.lr = hhb_config.lsq_lr
+    ppq_qs.lsq_optimization_setting.collecting_device = hhb_config.quant_device
 
     if target == "th1520":
         ppq_qs.fusion_setting.align_avgpooling_to = "Align to Input"
+
+    ppq_qs.fusion_setting.align_elementwise_to = hhb_config.align_elementwise
 
     return ppq_qs
 
@@ -676,12 +799,13 @@ def quantize_ppq(
 
     for _, op in quantized.operations.items():
         if op.type in NEED_TO_BE_QUANTIZED_OPS:
-            OQC = op.config
-            assert isinstance(OQC, OperationQuantizationConfig)
-            for iqc in OQC.input_quantization_config:
-                iqc.visibility = QuantizationVisibility.FORCE_EXPORT
-            for oqc in OQC.output_quantization_config:
-                oqc.visibility = QuantizationVisibility.FORCE_EXPORT
+            if hasattr(op, "config") and op.config:
+                OQC = op.config
+                assert isinstance(OQC, OperationQuantizationConfig)
+                for iqc in OQC.input_quantization_config:
+                    iqc.visibility = QuantizationVisibility.FORCE_EXPORT
+                for oqc in OQC.output_quantization_config:
+                    oqc.visibility = QuantizationVisibility.FORCE_EXPORT
 
     # export to onnx
     onnx_path = os.path.join(output_dir, "model_ppq_quantized.onnx")
@@ -692,6 +816,7 @@ def quantize_ppq(
         graph_save_to=onnx_path,
         config_save_to=cfg_path,
         quantized_param=True,
+        remove_activation=False,
     )
 
     return onnx_path, cfg_path

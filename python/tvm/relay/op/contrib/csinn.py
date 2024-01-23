@@ -185,6 +185,7 @@ _register_external_op_helper("qnn.csi.where")
 _register_external_op_helper("qnn.csi.where_softmax")
 _register_external_op_helper("qnn.csi.quantize")
 _register_external_op_helper("qnn.csi.dequantize")
+_register_external_op_helper("qnn.csi.data_convert")
 
 
 def partition_for_csinn(mod, params=None, **opts):

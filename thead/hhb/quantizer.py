@@ -40,6 +40,7 @@ from .core.arguments_manage import (
     add_codegen_argument,
     add_common_argument,
     add_optimize_argument,
+    add_postprocess_argument,
     ArgumentFilter,
 )
 from .core.hhbir_manage import (
@@ -176,6 +177,7 @@ def add_quantize_parser(subparsers):
     add_optimize_argument(parser)
     add_codegen_argument(parser)
     add_common_argument(parser)
+    add_postprocess_argument(parser)
 
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity")
     parser.add_argument("FILE", help="Directory to the model file")
