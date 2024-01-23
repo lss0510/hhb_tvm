@@ -62,7 +62,7 @@ def _alter_dense_layout(attrs, inputs, tinfos, out_type):
         topi_impl = workload[0]
         if topi_impl == "dense_pack.riscv":
             if cfg.is_fallback:
-                _default_dense_pack_config(cfg, M, N, K)
+                _default_dense_pack_config(cfg, M, N, K, out_dtype)
             packw_bn = cfg["tile_x"].size[-1]
             weight_layout = "NC%dn" % packw_bn
             new_weight = te.placeholder(

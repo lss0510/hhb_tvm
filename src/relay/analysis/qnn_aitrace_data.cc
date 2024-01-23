@@ -105,17 +105,21 @@ AiTraceData QnnConvert2ATData(Array<AiTraceDataFrame> origin_data) {
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnAddProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnBinaryOpAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetEltwiseCalAmountCommon(call_node, "add");
 }
 
 AiTraceDataFrame QnnAddProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnBinaryOpAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("qnn.csi.add")
     .set_attr<FCalAmount>("FCalAmount", QnnAddProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.add").set_attr<FMemory>("FMemory", QnnAddProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.add").set_attr<FOpName>("FOpName", [] { return String("qnn.csi.add"); });
+RELAY_REGISTER_OP("qnn.csi.add").set_attr<FOpName>("FOpName", QnnAddProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN AvgPool2d profiler implementation
@@ -123,10 +127,13 @@ RELAY_REGISTER_OP("qnn.csi.add").set_attr<FOpName>("FOpName", [] { return String
 
 AiTraceDataFrame QnnAvgPool2dProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* avgpool2d_attr = call_node->attrs.as<QnnCSIAvgPool2DAttrs>();
+  SetLayerName(avgpool2d_attr->layer_name);
   return GetPoolCalAmountCommon(call_node, avgpool2d_attr, avgpool2d_attr->pool_size, "avg", false);
 }
 
 AiTraceDataFrame QnnAvgPool2dProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIAvgPool2DAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
@@ -134,9 +141,8 @@ RELAY_REGISTER_OP("qnn.csi.avgpool2d")
     .set_attr<FCalAmount>("FCalAmount", QnnAvgPool2dProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.avgpool2d")
     .set_attr<FMemory>("FMemory", QnnAvgPool2dProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.avgpool2d").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.avgpool2d");
-});
+RELAY_REGISTER_OP("qnn.csi.avgpool2d")
+    .set_attr<FOpName>("FOpName", QnnAvgPool2dProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN BatchNorm profiler implementation
@@ -176,6 +182,8 @@ AiTraceDataFrame QnnBatchNormProfiler::GetCalculationAmount(const Call& call_nod
   }
 
   res = cai.GetIndicatorMap();
+
+  SetLayerName(batch_norm_attr->layer_name);
   return res;
 }
 
@@ -203,19 +211,24 @@ AiTraceDataFrame QnnBatchNormProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(in_shape);
 
   res = mi.GetIndicatorMap();
+
+  const auto* attrs = call_node->attrs.as<QnnCSIBatchNormAttrs>();
+  SetLayerName(attrs->layer_name);
   return res;
 }
 
 RELAY_REGISTER_OP("qnn.csi.bn")
     .set_attr<FCalAmount>("FCalAmount", QnnBatchNormProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.bn").set_attr<FMemory>("FMemory", QnnBatchNormProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.bn").set_attr<FOpName>("FOpName", [] { return String("qnn.csi.bn"); });
+RELAY_REGISTER_OP("qnn.csi.bn").set_attr<FOpName>("FOpName", QnnBatchNormProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN BiasAdd profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnBiasAddProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnBinaryOpAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetEltwiseCalAmountCommon(call_node, "add");
 }
 
@@ -234,25 +247,31 @@ AiTraceDataFrame QnnBiasAddProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_shape);
 
   res = mi.GetIndicatorMap();
+
+  const auto* attrs = call_node->attrs.as<QnnBinaryOpAttrs>();
+  SetLayerName(attrs->layer_name);
   return res;
 }
 
 RELAY_REGISTER_OP("qnn.csi.bias_add")
     .set_attr<FCalAmount>("FCalAmount", QnnBiasAddProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.bias_add").set_attr<FMemory>("FMemory", QnnBiasAddProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.bias_add").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.bias_add");
-});
+RELAY_REGISTER_OP("qnn.csi.bias_add")
+    .set_attr<FOpName>("FOpName", QnnBiasAddProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Concatenate profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnConcatenateProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnConcatenateAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetZeroCalAmountCommon(call_node);
 }
 
 AiTraceDataFrame QnnConcatenateProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnConcatenateAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
@@ -260,9 +279,8 @@ RELAY_REGISTER_OP("qnn.csi.concatenate")
     .set_attr<FCalAmount>("FCalAmount", QnnConcatenateProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.concatenate")
     .set_attr<FMemory>("FMemory", QnnConcatenateProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.concatenate").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.concatenate");
-});
+RELAY_REGISTER_OP("qnn.csi.concatenate")
+    .set_attr<FOpName>("FOpName", QnnConcatenateProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Qnn Conv2d profiler implementation
@@ -308,6 +326,8 @@ AiTraceDataFrame QnnConv2dProfiler::GetCalculationAmount(const Call& call_node) 
             GetCartesianProd(bias_shape);
 
   res = cai.GetIndicatorMap();
+
+  SetLayerName(conv_2d_attr->layer_name);
   return res;
 }
 
@@ -348,15 +368,15 @@ AiTraceDataFrame QnnConv2dProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_tensor);
 
   res = mi.GetIndicatorMap();
+
+  SetLayerName(conv_2d_attr->layer_name);
   return res;
 }
 
 RELAY_REGISTER_OP("qnn.csi.conv2d")
     .set_attr<FCalAmount>("FCalAmount", QnnConv2dProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.conv2d").set_attr<FMemory>("FMemory", QnnConv2dProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.conv2d").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.conv2d");
-});
+RELAY_REGISTER_OP("qnn.csi.conv2d").set_attr<FOpName>("FOpName", QnnConv2dProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Conv2dTranspose profiler implementation
@@ -403,6 +423,8 @@ AiTraceDataFrame QnnConv2dTranposeProfiler::GetCalculationAmount(const Call& cal
             GetCartesianProd(bias_size);
 
   res = cai.GetIndicatorMap();
+
+  SetLayerName(conv_2d_attr->layer_name);
   return res;
 }
 
@@ -445,6 +467,8 @@ AiTraceDataFrame QnnConv2dTranposeProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_tensor);
 
   res = mi.GetIndicatorMap();
+
+  SetLayerName(conv_2d_attr->layer_name);
   return res;
 }
 
@@ -452,9 +476,8 @@ RELAY_REGISTER_OP("qnn.csi.deconv2d")
     .set_attr<FCalAmount>("FCalAmount", QnnConv2dTranposeProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.deconv2d")
     .set_attr<FMemory>("FMemory", QnnConv2dTranposeProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.deconv2d").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.deconv2d");
-});
+RELAY_REGISTER_OP("qnn.csi.deconv2d")
+    .set_attr<FOpName>("FOpName", QnnConv2dTranposeProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Dense profiler implementation
@@ -489,6 +512,9 @@ AiTraceDataFrame QnnDenseProfiler::GetCalculationAmount(const Call& call_node) {
   cai.mul = d_prod * unit_in * unit_out;
   cai.add = d_prod * (unit_in - 1) * unit_out + d_prod * unit_out;
   res = cai.GetIndicatorMap();
+
+  const auto* attrs = call_node->attrs.as<QnnCSIDenseAttrs>();
+  SetLayerName(attrs->layer_name);
   return res;
 }
 
@@ -509,15 +535,16 @@ AiTraceDataFrame QnnDenseProfiler::GetMemory(const Call& call_node) {
   mi.output = GetCartesianProd(output_shape);
 
   res = mi.GetIndicatorMap();
+
+  const auto* attrs = call_node->attrs.as<QnnCSIDenseAttrs>();
+  SetLayerName(attrs->layer_name);
   return res;
 }
 
 RELAY_REGISTER_OP("qnn.csi.dense")
     .set_attr<FCalAmount>("FCalAmount", QnnDenseProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.dense").set_attr<FMemory>("FMemory", QnnDenseProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.dense").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.dense");
-});
+RELAY_REGISTER_OP("qnn.csi.dense").set_attr<FOpName>("FOpName", QnnDenseProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN GlobalAvgpool2d profiler implementation
@@ -525,11 +552,14 @@ RELAY_REGISTER_OP("qnn.csi.dense").set_attr<FOpName>("FOpName", [] {
 
 AiTraceDataFrame QnnGlobalAvgPool2dProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* globalpool2d_attr = call_node->attrs.as<QnnCSIGlobalAvgPoolAttrs>();
+  SetLayerName(globalpool2d_attr->layer_name);
   return GetPoolCalAmountCommon(call_node, globalpool2d_attr, Array<IndexExpr>({1, 1}), "avg",
                                 true);
 }
 
 AiTraceDataFrame QnnGlobalAvgPool2dProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIGlobalAvgPoolAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
@@ -537,9 +567,8 @@ RELAY_REGISTER_OP("qnn.csi.global_avgpool2d")
     .set_attr<FCalAmount>("FCalAmount", QnnGlobalAvgPool2dProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.global_avgpool2d")
     .set_attr<FMemory>("FMemory", QnnGlobalAvgPool2dProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.global_avgpool2d").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.global_avgpool2d");
-});
+RELAY_REGISTER_OP("qnn.csi.global_avgpool2d")
+    .set_attr<FOpName>("FOpName", QnnGlobalAvgPool2dProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN GlobalMaxpool2d profiler implementation
@@ -547,11 +576,14 @@ RELAY_REGISTER_OP("qnn.csi.global_avgpool2d").set_attr<FOpName>("FOpName", [] {
 
 AiTraceDataFrame QnnGlobalMaxPool2dProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* globalpool2d_attr = call_node->attrs.as<QnnCSIGlobalMaxPoolAttrs>();
+  SetLayerName(globalpool2d_attr->layer_name);
   return GetPoolCalAmountCommon(call_node, globalpool2d_attr, Array<IndexExpr>({1, 1}), "max",
                                 true);
 }
 
 AiTraceDataFrame QnnGlobalMaxPool2dProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIGlobalMaxPoolAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
@@ -559,9 +591,8 @@ RELAY_REGISTER_OP("qnn.csi.global_maxpool2d")
     .set_attr<FCalAmount>("FCalAmount", QnnGlobalMaxPool2dProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.global_maxpool2d")
     .set_attr<FMemory>("FMemory", QnnGlobalMaxPool2dProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.global_maxpool2d").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.global_maxpool2d");
-});
+RELAY_REGISTER_OP("qnn.csi.global_maxpool2d")
+    .set_attr<FOpName>("FOpName", QnnGlobalMaxPool2dProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN LRN profiler implementation
@@ -589,36 +620,42 @@ AiTraceDataFrame QnnLRNProfiler::GetCalculationAmount(const Call& call_node) {
   cai.exp = num_inputs;                                      // (...)^beta;
   cai.div = num_inputs;                                      // in_data/(...)
   res = cai.GetIndicatorMap();
+
+  SetLayerName(lrn_attrs->layer_name);
   return res;
 }
 
 AiTraceDataFrame QnnLRNProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSILRNAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("qnn.csi.lrn")
     .set_attr<FCalAmount>("FCalAmount", QnnLRNProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.lrn").set_attr<FMemory>("FMemory", QnnLRNProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.lrn").set_attr<FOpName>("FOpName", [] { return String("qnn.csi.lrn"); });
+RELAY_REGISTER_OP("qnn.csi.lrn").set_attr<FOpName>("FOpName", QnnLRNProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Maximum profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnMaximumProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnBinaryOpAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetEltwiseCalAmountCommon(call_node, "max");
 }
 
 AiTraceDataFrame QnnMaximumProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnBinaryOpAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("qnn.csi.maximum")
     .set_attr<FCalAmount>("FCalAmount", QnnMaximumProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.maximum").set_attr<FMemory>("FMemory", QnnMaximumProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.maximum").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.maximum");
-});
+RELAY_REGISTER_OP("qnn.csi.maximum").set_attr<FOpName>("FOpName", QnnMaximumProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Maxpool2d profiler implementation
@@ -626,10 +663,13 @@ RELAY_REGISTER_OP("qnn.csi.maximum").set_attr<FOpName>("FOpName", [] {
 
 AiTraceDataFrame QnnMaxPool2dProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* maxpool2d_attr = call_node->attrs.as<QnnCSIMaxPool2DAttrs>();
+  SetLayerName(maxpool2d_attr->layer_name);
   return GetPoolCalAmountCommon(call_node, maxpool2d_attr, maxpool2d_attr->pool_size, "max", false);
 }
 
 AiTraceDataFrame QnnMaxPool2dProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIMaxPool2DAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
@@ -637,9 +677,8 @@ RELAY_REGISTER_OP("qnn.csi.maxpool2d")
     .set_attr<FCalAmount>("FCalAmount", QnnMaxPool2dProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.maxpool2d")
     .set_attr<FMemory>("FMemory", QnnMaxPool2dProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.maxpool2d").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.maxpool2d");
-});
+RELAY_REGISTER_OP("qnn.csi.maxpool2d")
+    .set_attr<FOpName>("FOpName", QnnMaxPool2dProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Maxpool2dLocation profiler implementation
@@ -647,10 +686,13 @@ RELAY_REGISTER_OP("qnn.csi.maxpool2d").set_attr<FOpName>("FOpName", [] {
 
 AiTraceDataFrame QnnMaxPool2dLocationProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* maxpool2d_attr = call_node->attrs.as<QnnCSIMaxPool2DLocatAttrs>();
+  SetLayerName(maxpool2d_attr->layer_name);
   return GetPoolCalAmountCommon(call_node, maxpool2d_attr, maxpool2d_attr->pool_size, "max", false);
 }
 
 AiTraceDataFrame QnnMaxPool2dLocationProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIMaxPool2DLocatAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
@@ -658,9 +700,8 @@ RELAY_REGISTER_OP("qnn.csi.maxpool2d_locat")
     .set_attr<FCalAmount>("FCalAmount", QnnMaxPool2dLocationProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.maxpool2d_locat")
     .set_attr<FMemory>("FMemory", QnnMaxPool2dLocationProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.maxpool2d_locat").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.maxpool2d_locat");
-});
+RELAY_REGISTER_OP("qnn.csi.maxpool2d_locat")
+    .set_attr<FOpName>("FOpName", QnnMaxPool2dLocationProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Maxpool2dWithArgmax profiler implementation
@@ -668,10 +709,13 @@ RELAY_REGISTER_OP("qnn.csi.maxpool2d_locat").set_attr<FOpName>("FOpName", [] {
 
 AiTraceDataFrame QnnMaxPool2dWithArgmaxProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* maxpool2d_attr = call_node->attrs.as<QnnCSIMaxPool2DAttrs>();
+  SetLayerName(maxpool2d_attr->layer_name);
   return GetPoolCalAmountCommon(call_node, maxpool2d_attr, maxpool2d_attr->pool_size, "max", false);
 }
 
 AiTraceDataFrame QnnMaxPool2dWithArgmaxProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIMaxPool2DAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
@@ -679,32 +723,37 @@ RELAY_REGISTER_OP("qnn.csi.maxpool2d_with_argmax")
     .set_attr<FCalAmount>("FCalAmount", QnnMaxPool2dWithArgmaxProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.maxpool2d_with_argmax")
     .set_attr<FMemory>("FMemory", QnnMaxPool2dWithArgmaxProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.maxpool2d_with_argmax").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.maxpool2d_with_argmax");
-});
+RELAY_REGISTER_OP("qnn.csi.maxpool2d_with_argmax")
+    .set_attr<FOpName>("FOpName", QnnMaxPool2dWithArgmaxProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Multiply profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnMultiplyProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnBinaryOpAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetEltwiseCalAmountCommon(call_node, "mul");
 }
 
 AiTraceDataFrame QnnMultiplyProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnBinaryOpAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("qnn.csi.mul")
     .set_attr<FCalAmount>("FCalAmount", QnnMultiplyProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.mul").set_attr<FMemory>("FMemory", QnnMultiplyProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.mul").set_attr<FOpName>("FOpName", [] { return String("qnn.csi.mul"); });
+RELAY_REGISTER_OP("qnn.csi.mul").set_attr<FOpName>("FOpName", QnnMultiplyProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN PRelu profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnPreluProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIPReluAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetReluCalAmountCommon(call_node);
 }
 
@@ -723,15 +772,16 @@ AiTraceDataFrame QnnPreluProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_shape);
 
   res = mi.GetIndicatorMap();
+
+  const auto* attrs = call_node->attrs.as<QnnCSIPReluAttrs>();
+  SetLayerName(attrs->layer_name);
   return res;
 }
 
 RELAY_REGISTER_OP("qnn.csi.prelu")
     .set_attr<FCalAmount>("FCalAmount", QnnPreluProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.prelu").set_attr<FMemory>("FMemory", QnnPreluProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.prelu").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.prelu");
-});
+RELAY_REGISTER_OP("qnn.csi.prelu").set_attr<FOpName>("FOpName", QnnPreluProfiler::GetLayerName);
 
 // ------------------------------------------------------------------------------
 // QNN Proposal profiler implementation
@@ -820,19 +870,22 @@ AiTraceDataFrame QnnProposalProfiler::GetCalculationAmount(const Call& call_node
   cai.exp *= batch;
   cai.comp *= batch;
   res = cai.GetIndicatorMap();
+
+  SetLayerName(proposal_attr->layer_name);
   return res;
 }
 
 AiTraceDataFrame QnnProposalProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIProposalAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("qnn.csi.proposal")
     .set_attr<FCalAmount>("FCalAmount", QnnProposalProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.proposal").set_attr<FMemory>("FMemory", QnnProposalProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.proposal").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.proposal");
-});
+RELAY_REGISTER_OP("qnn.csi.proposal")
+    .set_attr<FOpName>("FOpName", QnnProposalProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN PSRoiPooling profiler implementation
@@ -885,10 +938,14 @@ AiTraceDataFrame QnnPsroipoolingProfiler::GetCalculationAmount(const Call& call_
   cai.exp *= batch;
   cai.comp *= batch;
   res = cai.GetIndicatorMap();
+
+  SetLayerName(psroi_pool_attr->layer_name);
   return res;
 }
 
 AiTraceDataFrame QnnPsroipoolingProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIPSROIPoolingAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
@@ -896,47 +953,50 @@ RELAY_REGISTER_OP("qnn.csi.psroipooling")
     .set_attr<FCalAmount>("FCalAmount", QnnPsroipoolingProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.psroipooling")
     .set_attr<FMemory>("FMemory", QnnPsroipoolingProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.psroipooling").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.psroipooling");
-});
+RELAY_REGISTER_OP("qnn.csi.psroipooling")
+    .set_attr<FOpName>("FOpName", QnnPsroipoolingProfiler::GetLayerName);
 
 // ------------------------------------------------------------------------------
 // QNN Relu profiler implementation
 // ------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnReluProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIUnaryAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetReluCalAmountCommon(call_node);
 }
 
 AiTraceDataFrame QnnReluProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIUnaryAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("qnn.csi.relu")
     .set_attr<FCalAmount>("FCalAmount", QnnReluProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.relu").set_attr<FMemory>("FMemory", QnnReluProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.relu").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.relu");
-});
+RELAY_REGISTER_OP("qnn.csi.relu").set_attr<FOpName>("FOpName", QnnReluProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Reshape profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnReshapeProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIReshapeAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetZeroCalAmountCommon(call_node);
 }
 
 AiTraceDataFrame QnnReshapeProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIReshapeAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("qnn.csi.reshape")
     .set_attr<FCalAmount>("FCalAmount", ReshapeProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.reshape").set_attr<FMemory>("FMemory", QnnReshapeProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.reshape").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.reshape");
-});
+RELAY_REGISTER_OP("qnn.csi.reshape").set_attr<FOpName>("FOpName", QnnReshapeProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN RoiPool profiler implementation
@@ -986,19 +1046,22 @@ AiTraceDataFrame QnnRoiPoolProfiler::GetCalculationAmount(const Call& call_node)
   cai.comp *= batch;
 
   res = cai.GetIndicatorMap();
+
+  SetLayerName(roi_pool_attr->layer_name);
   return res;
 }
 
 AiTraceDataFrame QnnRoiPoolProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIROIPoolingAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("qnn.csi.roipooling")
     .set_attr<FCalAmount>("FCalAmount", QnnRoiPoolProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.roipooling").set_attr<FMemory>("FMemory", QnnRoiPoolProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.roipooling").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.roipooling");
-});
+RELAY_REGISTER_OP("qnn.csi.roipooling")
+    .set_attr<FOpName>("FOpName", QnnRoiPoolProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Sigmoid profiler implementation
@@ -1021,19 +1084,22 @@ AiTraceDataFrame QnnSigmoidProfiler::GetCalculationAmount(const Call& call_node)
   cai.add = num_inputs;
   cai.div = num_inputs;
   res = cai.GetIndicatorMap();
+
+  const auto* attrs = call_node->attrs.as<QnnCSIUnaryAttrs>();
+  SetLayerName(attrs->layer_name);
   return res;
 }
 
 AiTraceDataFrame QnnSigmoidProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIUnaryAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("qnn.csi.sigmoid")
     .set_attr<FCalAmount>("FCalAmount", QnnSigmoidProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.sigmoid").set_attr<FMemory>("FMemory", QnnSigmoidProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.sigmoid").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.sigmoid");
-});
+RELAY_REGISTER_OP("qnn.csi.sigmoid").set_attr<FOpName>("FOpName", QnnSigmoidProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Softmax profiler implementation
@@ -1058,25 +1124,29 @@ AiTraceDataFrame QnnSoftmaxProfiler::GetCalculationAmount(const Call& call_node)
   cai.add = (num_inputs / axis_shape - 1) * axis_shape;
   cai.div = num_inputs;
   res = cai.GetIndicatorMap();
+
+  SetLayerName(soft_attr->layer_name);
   return res;
 }
 
 AiTraceDataFrame QnnSoftmaxProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIAxisAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("qnn.csi.softmax")
     .set_attr<FCalAmount>("FCalAmount", QnnSoftmaxProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.softmax").set_attr<FMemory>("FMemory", QnnSoftmaxProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.softmax").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.softmax");
-});
+RELAY_REGISTER_OP("qnn.csi.softmax").set_attr<FOpName>("FOpName", QnnSoftmaxProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Split profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnSplitProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSISplitAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetZeroCalAmountCommon(call_node);
 }
 
@@ -1093,21 +1163,24 @@ AiTraceDataFrame QnnSplitProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(input_shape);
 
   res = mi.GetIndicatorMap();
+
+  const auto* attrs = call_node->attrs.as<QnnCSISplitAttrs>();
+  SetLayerName(attrs->layer_name);
   return res;
 }
 
 RELAY_REGISTER_OP("qnn.csi.split")
     .set_attr<FCalAmount>("FCalAmount", QnnSplitProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.split").set_attr<FMemory>("FMemory", QnnSplitProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.split").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.split");
-});
+RELAY_REGISTER_OP("qnn.csi.split").set_attr<FOpName>("FOpName", QnnSplitProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN StridedSlice profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnStridedSliceProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIStridedSliceAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetZeroCalAmountCommon(call_node);
 }
 
@@ -1123,6 +1196,9 @@ AiTraceDataFrame QnnStridedSliceProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_shape);
 
   res = mi.GetIndicatorMap();
+
+  const auto* attrs = call_node->attrs.as<QnnCSIStridedSliceAttrs>();
+  SetLayerName(attrs->layer_name);
   return res;
 }
 
@@ -1130,9 +1206,8 @@ RELAY_REGISTER_OP("qnn.csi.strided_slice")
     .set_attr<FCalAmount>("FCalAmount", QnnStridedSliceProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.strided_slice")
     .set_attr<FMemory>("FMemory", QnnStridedSliceProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.strided_slice").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.strided_slice");
-});
+RELAY_REGISTER_OP("qnn.csi.strided_slice")
+    .set_attr<FOpName>("FOpName", QnnStridedSliceProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Tanh profiler implementation
@@ -1156,25 +1231,30 @@ AiTraceDataFrame QnnTanhProfiler::GetCalculationAmount(const Call& call_node) {
   cai.sub = 2 * num_inputs;
   cai.div = num_inputs;
   res = cai.GetIndicatorMap();
+
+  const auto* attrs = call_node->attrs.as<QnnCSIUnaryAttrs>();
+  SetLayerName(attrs->layer_name);
   return res;
 }
 
 AiTraceDataFrame QnnTanhProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIUnaryAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("qnn.csi.tanh")
     .set_attr<FCalAmount>("FCalAmount", QnnTanhProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.tanh").set_attr<FMemory>("FMemory", QnnTanhProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.tanh").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.tanh");
-});
+RELAY_REGISTER_OP("qnn.csi.tanh").set_attr<FOpName>("FOpName", QnnTanhProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN Transpose profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnTransposeProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSITransposeAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetZeroCalAmountCommon(call_node);
 }
 
@@ -1193,6 +1273,9 @@ AiTraceDataFrame QnnTransposeProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_shape);
 
   res = mi.GetIndicatorMap();
+
+  const auto* attrs = call_node->attrs.as<QnnCSITransposeAttrs>();
+  SetLayerName(attrs->layer_name);
   return res;
 }
 
@@ -1200,19 +1283,22 @@ RELAY_REGISTER_OP("qnn.csi.transpose")
     .set_attr<FCalAmount>("FCalAmount", QnnTransposeProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.transpose")
     .set_attr<FMemory>("FMemory", QnnTransposeProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.transpose").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.transpose");
-});
+RELAY_REGISTER_OP("qnn.csi.transpose")
+    .set_attr<FOpName>("FOpName", QnnTransposeProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN unpooling profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame QnnUnpoolingProfiler::GetCalculationAmount(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIUnPoolingAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetZeroCalAmountCommon(call_node);
 }
 
 AiTraceDataFrame QnnUnpoolingProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIUnPoolingAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
@@ -1220,9 +1306,8 @@ RELAY_REGISTER_OP("qnn.csi.unpooling")
     .set_attr<FCalAmount>("FCalAmount", QnnUnpoolingProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.unpooling")
     .set_attr<FMemory>("FMemory", QnnUnpoolingProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.unpooling").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.unpooling");
-});
+RELAY_REGISTER_OP("qnn.csi.unpooling")
+    .set_attr<FOpName>("FOpName", QnnUnpoolingProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // QNN upsampling profiler implementation
@@ -1272,10 +1357,14 @@ AiTraceDataFrame QnnUpsamplingProfiler::GetCalculationAmount(const Call& call_no
   cai.comp *= o_batch;
 
   res = cai.GetIndicatorMap();
+
+  SetLayerName(attr->layer_name);
   return res;
 }
 
 AiTraceDataFrame QnnUpsamplingProfiler::GetMemory(const Call& call_node) {
+  const auto* attrs = call_node->attrs.as<QnnCSIUpSamplingAttrs>();
+  SetLayerName(attrs->layer_name);
   return GetMemoryCommon(call_node);
 }
 
@@ -1283,9 +1372,8 @@ RELAY_REGISTER_OP("qnn.csi.upsampling")
     .set_attr<FCalAmount>("FCalAmount", QnnUpsamplingProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("qnn.csi.upsampling")
     .set_attr<FMemory>("FMemory", QnnUpsamplingProfiler::GetMemory);
-RELAY_REGISTER_OP("qnn.csi.upsampling").set_attr<FOpName>("FOpName", [] {
-  return String("qnn.csi.upsampling");
-});
+RELAY_REGISTER_OP("qnn.csi.upsampling")
+    .set_attr<FOpName>("FOpName", QnnUpsamplingProfiler::GetLayerName);
 
 }  // namespace aitrace
 }  // namespace relay

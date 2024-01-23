@@ -17,7 +17,7 @@
  * under the License.
  */
 
-/* auto generate by HHB_VERSION "2.8.1" */
+/* auto generate by HHB_VERSION "2.9.5" */
 
 #_hhb_header_files_#
 #include "cmd_parse.h"
@@ -118,6 +118,7 @@ int main(int argc, char **argv) {
         #_aligned_buffer_free_#
     }
 
+    free(option);
     csinn_session_deinit(sess);
     csinn_free_session(sess);
 

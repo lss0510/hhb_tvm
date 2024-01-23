@@ -25,6 +25,7 @@ import logging
 import collections
 import sys
 import subprocess
+import json
 
 import numpy as np
 
@@ -41,8 +42,8 @@ logger = logging.getLogger("HHB")
 
 def hhb_version():
     """Version information"""
-    __version__ = "2.8.1"
-    __build_time__ = "20231130"
+    __version__ = "2.9.5"
+    __build_time__ = "20231226"
     return "HHB version: " + __version__ + ", build " + __build_time__
 
 
@@ -629,13 +630,22 @@ def hhb_deprecated_check(deprecated_content, since_version=None, substitute=""):
     logger.warning(msg)
 
 
-def to_json_with_formatted(data, path):
+def to_json(data, path, with_format=False):
     """save json file with beautifier format."""
-    import jsbeautifier
-    import json
+    if with_format:
+        import jsbeautifier
 
-    options = jsbeautifier.default_options()
-    options.indent_size = 2
-    res = jsbeautifier.beautify(json.dumps(data), options)
-    with open(path, "w") as f:
-        f.write(res)
+        options = jsbeautifier.default_options()
+        options.indent_size = 2
+        res = jsbeautifier.beautify(json.dumps(data, sort_keys=True), options)
+        with open(path, "w") as f:
+            f.write(res)
+    else:
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+
+
+def from_json(path: str):
+    with open(path, "r") as f:
+        data = json.load(f)
+    return data

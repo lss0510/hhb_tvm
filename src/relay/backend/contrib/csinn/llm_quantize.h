@@ -17,28 +17,26 @@
  * under the License.
  */
 
-/* auto generate by HHB_VERSION "2.9.5" */
+/*!
+ * \file src/relay/backend/contrib/csinn/llm_quantize.h
+ * \brief The base class for LLM quantize.
+ */
 
-#ifndef HHB_IO_H_
-#define HHB_IO_H_
+#ifndef TVM_RELAY_BACKEND_CONTRIB_CSINN_LLM_QUANTIZE_H_
+#define TVM_RELAY_BACKEND_CONTRIB_CSINN_LLM_QUANTIZE_H_
+#include <utility>
 
-#include <math.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "llm/shl_llm.h"
+#include "shl.h"
+namespace tvm {
+namespace relay {
+namespace contrib {
+namespace csinn {
 
-#define MAX_FILE_LINE 50001
-#define MAX_INPUT_NUMBER 4
-#define MAX_FILENAME_LEN 1280
-
-enum file_type { FILE_PNG, FILE_JPEG, FILE_TENSOR, FILE_TXT, FILE_BIN };
-
-/* Utils to process image data*/
-enum file_type get_file_type(const char* filename);
-void save_data_to_file(const char* filename, float* data, uint32_t size);
-char* get_binary_from_file(const char* filename, int* size);
-char** read_string_from_file(const char* filename, int* len);
-uint32_t shape2string(uint32_t* shape, uint32_t dim_num, char* buf, uint32_t buf_sz);
-
-#endif  // HHB_IO_H_
+TVMByteArray LLMQuantizeBlock32(TVMObjectHandle data, int32_t dim_count, TVMObjectHandle dim,
+                                int32_t mtype);
+}  // namespace csinn
+}  // namespace contrib
+}  // namespace relay
+}  // namespace tvm
+#endif  // TVM_RELAY_BACKEND_CONTRIB_CSINN_LLM_QUANTIZE_H_

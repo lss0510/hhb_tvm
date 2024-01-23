@@ -26,12 +26,21 @@ from ..nn.utils import get_pad_tuple
 from ..generic import conv2d as conv2d_generic
 from ..utils import get_const_tuple, simplify
 from .tensor_intrin import dot_16x1x16_uint8_int8_int32
-from .utils import get_simd_32bit_lanes, intrin_add_vv, intrin_load, intrin_act
+from .utils import (
+    get_simd_32bit_lanes,
+    intrin_add_vv,
+    intrin_load,
+    intrin_act,
+    get_simd_16bit_lanes,
+)
 from .utils import get_act_mod, intrin_macc_fv, intrin_add_add_vv
 
 
 def _fallback_schedule(cfg, wkl):
-    simd_width = get_simd_32bit_lanes()
+    if wkl.in_dtype == "float32":
+        simd_width = get_simd_32bit_lanes()
+    else:
+        simd_width = get_simd_16bit_lanes()
     pt, pl, pb, pr = wkl.padt, wkl.padl, wkl.padb, wkl.padr
     HSTR, WSTR = wkl.stride_h, wkl.stride_w
     dilated_kernel_h = (wkl.kernel_h - 1) * wkl.dilation_h + 1

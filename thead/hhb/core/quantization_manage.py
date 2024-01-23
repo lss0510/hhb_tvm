@@ -193,6 +193,7 @@ def get_config_dict(args):
         "low_bound_scale": args.quantize_config.low_bound_scale,
         "high_bound_scale": args.quantize_config.high_bound_scale,
         "show_session_run_time": args.show_session_run_time,
+        "trace": args.trace if args.trace else [],
     }
     if args.quantize_config.low_bound_scale < 1:
         hhb_exit("--low-bound-scale should be >= 1.")
@@ -275,7 +276,9 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         elif filtered_args.quantize_config.quantization_scheme == "int8_asym_w_sym":
             new_values["quantization_scheme"] = "int8_asym_w_sym"
         elif filtered_args.quantize_config.quantization_scheme == "int8_original":
-            new_values["quantization_scheme"] = "int8_original"
+            raise HHBException(
+                f"quantization_scheme 'int8_original' has been removed. Please use the actual quantification of the model."
+            )
         elif filtered_args.quantize_config.quantization_scheme == "uint8_asym":
             new_values["quantization_scheme"] = "uint8_asym"
         elif filtered_args.quantize_config.quantization_scheme == "int8_asym":
@@ -442,7 +445,7 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         new_values["dtype_activation"] = "int32"
         new_values["activate_quantized_type"] = "asym"
         new_values["weight_quantized_type"] = "asym"
-    elif filtered_args.quantize_config.quantization_scheme in ["int8_sym", "int8_original"]:
+    elif filtered_args.quantize_config.quantization_scheme in ["int8_sym"]:
         new_values["num_bit_input"] = 8
         new_values["num_bit_weight"] = 8
         new_values["num_bit_activation"] = 32
@@ -507,6 +510,10 @@ def set_quantize_params_by_board(filtered_args, extra=None):
         new_values["dtype_activation"] = "float32"
         new_values["activate_quantized_type"] = "sym"
         new_values["weight_quantized_type"] = "sym"
+    elif filtered_args.quantize_config.quantization_scheme == "int8_original":
+        raise HHBException(
+            f"quantization_scheme 'int8_original' has been removed. Please use the actual quantification of the model."
+        )
     else:
         if "quantization_scheme" not in new_values:
             raise HHBException("Unsupport quantization scheme.\n")

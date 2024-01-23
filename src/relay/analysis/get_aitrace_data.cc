@@ -226,16 +226,18 @@ AiTraceDataFrame GetMemoryCommon(const Call& call_node) {
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame AddProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetEltwiseCalAmountCommon(call_node, "add");
 }
 
 AiTraceDataFrame AddProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("add").set_attr<FCalAmount>("FCalAmount", AddProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("add").set_attr<FMemory>("FMemory", AddProfiler::GetMemory);
-RELAY_REGISTER_OP("add").set_attr<FOpName>("FOpName", [] { return String("add"); });
+RELAY_REGISTER_OP("add").set_attr<FOpName>("FOpName", AddProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // AvgPool2d profiler implementation
@@ -243,38 +245,39 @@ RELAY_REGISTER_OP("add").set_attr<FOpName>("FOpName", [] { return String("add");
 
 AiTraceDataFrame AvgPool2dProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* avgpool2d_attr = call_node->attrs.as<AvgPool2DAttrs>();
+  SetLayerName(call_node);
   return GetPoolCalAmountCommon(call_node, avgpool2d_attr, avgpool2d_attr->pool_size, "avg", false);
 }
 
 AiTraceDataFrame AvgPool2dProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("nn.avg_pool2d")
     .set_attr<FCalAmount>("FCalAmount", AvgPool2dProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.avg_pool2d").set_attr<FMemory>("FMemory", AvgPool2dProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.avg_pool2d").set_attr<FOpName>("FOpName", [] {
-  return String("nn.avg_pool2d");
-});
+RELAY_REGISTER_OP("nn.avg_pool2d").set_attr<FOpName>("FOpName", AvgPool2dProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // BatchFlatten profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame BatchFlattenProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetZeroCalAmountCommon(call_node);
 }
 
 AiTraceDataFrame BatchFlattenProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("nn.batch_flatten")
     .set_attr<FCalAmount>("FCalAmount", BatchFlattenProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.batch_flatten").set_attr<FMemory>("FMemory", BatchFlattenProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.batch_flatten").set_attr<FOpName>("FOpName", [] {
-  return String("nn.batch_flatten");
-});
+RELAY_REGISTER_OP("nn.batch_flatten")
+    .set_attr<FOpName>("FOpName", BatchFlattenProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // BatchNorm profiler implementation
@@ -314,6 +317,7 @@ AiTraceDataFrame BatchNormProfiler::GetCalculationAmount(const Call& call_node) 
   }
 
   res = cai.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
@@ -341,21 +345,21 @@ AiTraceDataFrame BatchNormProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(in_shape);
 
   res = mi.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 RELAY_REGISTER_OP("nn.batch_norm")
     .set_attr<FCalAmount>("FCalAmount", BatchNormProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.batch_norm").set_attr<FMemory>("FMemory", BatchNormProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.batch_norm").set_attr<FOpName>("FOpName", [] {
-  return String("nn.batch_norm");
-});
+RELAY_REGISTER_OP("nn.batch_norm").set_attr<FOpName>("FOpName", BatchNormProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // BiasAdd profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame BiasAddProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetEltwiseCalAmountCommon(call_node, "add");
 }
 
@@ -374,30 +378,33 @@ AiTraceDataFrame BiasAddProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_shape);
 
   res = mi.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 RELAY_REGISTER_OP("nn.bias_add")
     .set_attr<FCalAmount>("FCalAmount", BiasAddProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.bias_add").set_attr<FMemory>("FMemory", BiasAddProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.bias_add").set_attr<FOpName>("FOpName", [] { return String("nn.bias_add"); });
+RELAY_REGISTER_OP("nn.bias_add").set_attr<FOpName>("FOpName", BiasAddProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Concatenate profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame ConcatenateProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetZeroCalAmountCommon(call_node);
 }
 
 AiTraceDataFrame ConcatenateProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("concatenate")
     .set_attr<FCalAmount>("FCalAmount", ConcatenateProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("concatenate").set_attr<FMemory>("FMemory", ConcatenateProfiler::GetMemory);
-RELAY_REGISTER_OP("concatenate").set_attr<FOpName>("FOpName", [] { return String("concatenate"); });
+RELAY_REGISTER_OP("concatenate").set_attr<FOpName>("FOpName", ConcatenateProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Conv2d profiler implementation
@@ -441,6 +448,8 @@ AiTraceDataFrame Conv2dProfiler::GetCalculationAmount(const Call& call_node) {
             GetCartesianProd(output_tensor);
 
   res = cai.GetIndicatorMap();
+
+  SetLayerName(call_node);
   return res;
 }
 
@@ -480,13 +489,14 @@ AiTraceDataFrame Conv2dProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_tensor);
 
   res = mi.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 RELAY_REGISTER_OP("nn.conv2d")
     .set_attr<FCalAmount>("FCalAmount", Conv2dProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.conv2d").set_attr<FMemory>("FMemory", Conv2dProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.conv2d").set_attr<FOpName>("FOpName", [] { return String("nn.conv2d"); });
+RELAY_REGISTER_OP("nn.conv2d").set_attr<FOpName>("FOpName", Conv2dProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Conv2dTranspose profiler implementation
@@ -531,6 +541,8 @@ AiTraceDataFrame Conv2dTranposeProfiler::GetCalculationAmount(const Call& call_n
             GetCartesianProd(output_tensor);
 
   res = cai.GetIndicatorMap();
+
+  SetLayerName(call_node);
   return res;
 }
 
@@ -571,6 +583,7 @@ AiTraceDataFrame Conv2dTranposeProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_tensor);
 
   res = mi.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
@@ -578,9 +591,8 @@ RELAY_REGISTER_OP("nn.conv2d_transpose")
     .set_attr<FCalAmount>("FCalAmount", Conv2dTranposeProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.conv2d_transpose")
     .set_attr<FMemory>("FMemory", Conv2dTranposeProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.conv2d_transpose").set_attr<FOpName>("FOpName", [] {
-  return String("nn.conv2d_transpose");
-});
+RELAY_REGISTER_OP("nn.conv2d_transpose")
+    .set_attr<FOpName>("FOpName", Conv2dTranposeProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Dense profiler implementation
@@ -615,6 +627,8 @@ AiTraceDataFrame DenseProfiler::GetCalculationAmount(const Call& call_node) {
   cai.mul = d_prod * unit_in * unit_out;
   cai.add = d_prod * (unit_in - 1) * unit_out;
   res = cai.GetIndicatorMap();
+
+  SetLayerName(call_node);
   return res;
 }
 
@@ -634,19 +648,21 @@ AiTraceDataFrame DenseProfiler::GetMemory(const Call& call_node) {
   mi.output = GetCartesianProd(output_shape);
 
   res = mi.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 RELAY_REGISTER_OP("nn.dense")
     .set_attr<FCalAmount>("FCalAmount", DenseProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.dense").set_attr<FMemory>("FMemory", DenseProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.dense").set_attr<FOpName>("FOpName", [] { return String("nn.dense"); });
+RELAY_REGISTER_OP("nn.dense").set_attr<FOpName>("FOpName", DenseProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Dropout profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame DropoutProfiler ::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetZeroCalAmountCommon(call_node);
 }
 
@@ -665,13 +681,14 @@ AiTraceDataFrame DropoutProfiler::GetMemory(const Call& call_node) {
   mi.output = GetCartesianProd(input_shape) * 2;
 
   res = mi.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 RELAY_REGISTER_OP("nn.dropout")
     .set_attr<FCalAmount>("FCalAmount", DropoutProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.dropout").set_attr<FMemory>("FMemory", DropoutProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.dropout").set_attr<FOpName>("FOpName", [] { return String("nn.dropout"); });
+RELAY_REGISTER_OP("nn.dropout").set_attr<FOpName>("FOpName", DropoutProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // GlobalAvgpool2d profiler implementation
@@ -679,11 +696,13 @@ RELAY_REGISTER_OP("nn.dropout").set_attr<FOpName>("FOpName", [] { return String(
 
 AiTraceDataFrame GlobalAvgPool2dProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* globalpool2d_attr = call_node->attrs.as<GlobalPool2DAttrs>();
+  SetLayerName(call_node);
   return GetPoolCalAmountCommon(call_node, globalpool2d_attr, Array<IndexExpr>({1, 1}), "avg",
                                 true);
 }
 
 AiTraceDataFrame GlobalAvgPool2dProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
@@ -691,9 +710,8 @@ RELAY_REGISTER_OP("nn.global_avg_pool2d")
     .set_attr<FCalAmount>("FCalAmount", GlobalAvgPool2dProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.global_avg_pool2d")
     .set_attr<FMemory>("FMemory", GlobalAvgPool2dProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.global_avg_pool2d").set_attr<FOpName>("FOpName", [] {
-  return String("nn.global_avg_pool2d");
-});
+RELAY_REGISTER_OP("nn.global_avg_pool2d")
+    .set_attr<FOpName>("FOpName", GlobalAvgPool2dProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // GlobalMaxpool2d profiler implementation
@@ -701,11 +719,13 @@ RELAY_REGISTER_OP("nn.global_avg_pool2d").set_attr<FOpName>("FOpName", [] {
 
 AiTraceDataFrame GlobalMaxPool2dProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* globalpool2d_attr = call_node->attrs.as<GlobalPool2DAttrs>();
+  SetLayerName(call_node);
   return GetPoolCalAmountCommon(call_node, globalpool2d_attr, Array<IndexExpr>({1, 1}), "max",
                                 true);
 }
 
 AiTraceDataFrame GlobalMaxPool2dProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
@@ -713,9 +733,8 @@ RELAY_REGISTER_OP("nn.global_max_pool2d")
     .set_attr<FCalAmount>("FCalAmount", GlobalMaxPool2dProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.global_max_pool2d")
     .set_attr<FMemory>("FMemory", GlobalMaxPool2dProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.global_max_pool2d").set_attr<FOpName>("FOpName", [] {
-  return String("nn.global_max_pool2d");
-});
+RELAY_REGISTER_OP("nn.global_max_pool2d")
+    .set_attr<FOpName>("FOpName", GlobalMaxPool2dProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // LRN profiler implementation
@@ -743,16 +762,18 @@ AiTraceDataFrame LRNProfiler::GetCalculationAmount(const Call& call_node) {
   cai.exp = num_inputs;                                      // (...)^beta;
   cai.div = num_inputs;                                      // in_data/(...)
   res = cai.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 AiTraceDataFrame LRNProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("nn.lrn").set_attr<FCalAmount>("FCalAmount", LRNProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.lrn").set_attr<FMemory>("FMemory", LRNProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.lrn").set_attr<FOpName>("FOpName", [] { return String("nn.lrn"); });
+RELAY_REGISTER_OP("nn.lrn").set_attr<FOpName>("FOpName", LRNProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // L2_Normalize profiler implementation
@@ -789,36 +810,39 @@ AiTraceDataFrame L2NormalizeNProfiler::GetCalculationAmount(const Call& call_nod
   cai.fused_mul_add = cai.mul;
 
   res = cai.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 AiTraceDataFrame L2NormalizeNProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("nn.l2_normalize")
     .set_attr<FCalAmount>("FCalAmount", L2NormalizeNProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.l2_normalize").set_attr<FMemory>("FMemory", L2NormalizeNProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.l2_normalize").set_attr<FOpName>("FOpName", [] {
-  return String("nn.l2_normalize");
-});
+RELAY_REGISTER_OP("nn.l2_normalize")
+    .set_attr<FOpName>("FOpName", L2NormalizeNProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Maximum profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame MaximumProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetEltwiseCalAmountCommon(call_node, "max");
 }
 
 AiTraceDataFrame MaximumProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("maximum").set_attr<FCalAmount>("FCalAmount",
                                                   MaximumProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("maximum").set_attr<FMemory>("FMemory", MaximumProfiler::GetMemory);
-RELAY_REGISTER_OP("maximum").set_attr<FOpName>("FOpName", [] { return String("maximum"); });
+RELAY_REGISTER_OP("maximum").set_attr<FOpName>("FOpName", MaximumProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Maxpool2d profiler implementation
@@ -826,19 +850,19 @@ RELAY_REGISTER_OP("maximum").set_attr<FOpName>("FOpName", [] { return String("ma
 
 AiTraceDataFrame MaxPool2dProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* maxpool2d_attr = call_node->attrs.as<MaxPool2DAttrs>();
+  SetLayerName(call_node);
   return GetPoolCalAmountCommon(call_node, maxpool2d_attr, maxpool2d_attr->pool_size, "max", false);
 }
 
 AiTraceDataFrame MaxPool2dProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("nn.max_pool2d")
     .set_attr<FCalAmount>("FCalAmount", MaxPool2dProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.max_pool2d").set_attr<FMemory>("FMemory", MaxPool2dProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.max_pool2d").set_attr<FOpName>("FOpName", [] {
-  return String("nn.max_pool2d");
-});
+RELAY_REGISTER_OP("nn.max_pool2d").set_attr<FOpName>("FOpName", MaxPool2dProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Maxpool2dLocation profiler implementation
@@ -846,10 +870,12 @@ RELAY_REGISTER_OP("nn.max_pool2d").set_attr<FOpName>("FOpName", [] {
 
 AiTraceDataFrame MaxPool2dLocationProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* maxpool2d_attr = call_node->attrs.as<MaxPool2dLocationAttrs>();
+  SetLayerName(call_node);
   return GetPoolCalAmountCommon(call_node, maxpool2d_attr, maxpool2d_attr->pool_size, "max", false);
 }
 
 AiTraceDataFrame MaxPool2dLocationProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
@@ -857,9 +883,8 @@ RELAY_REGISTER_OP("vision.max_pool2d_location")
     .set_attr<FCalAmount>("FCalAmount", MaxPool2dLocationProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("vision.max_pool2d_location")
     .set_attr<FMemory>("FMemory", MaxPool2dLocationProfiler::GetMemory);
-RELAY_REGISTER_OP("vision.max_pool2d_location").set_attr<FOpName>("FOpName", [] {
-  return String("vision.max_pool2d_location");
-});
+RELAY_REGISTER_OP("vision.max_pool2d_location")
+    .set_attr<FOpName>("FOpName", MaxPool2dLocationProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Maxpool2dWithArgmax profiler implementation
@@ -867,10 +892,12 @@ RELAY_REGISTER_OP("vision.max_pool2d_location").set_attr<FOpName>("FOpName", [] 
 
 AiTraceDataFrame MaxPool2dWithArgmaxProfiler::GetCalculationAmount(const Call& call_node) {
   const auto* maxpool2d_attr = call_node->attrs.as<MaxPool2DAttrs>();
+  SetLayerName(call_node);
   return GetPoolCalAmountCommon(call_node, maxpool2d_attr, maxpool2d_attr->pool_size, "max", false);
 }
 
 AiTraceDataFrame MaxPool2dWithArgmaxProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
@@ -878,32 +905,34 @@ RELAY_REGISTER_OP("nn.max_pool2d_with_argmax")
     .set_attr<FCalAmount>("FCalAmount", MaxPool2dWithArgmaxProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.max_pool2d_with_argmax")
     .set_attr<FMemory>("FMemory", MaxPool2dWithArgmaxProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.max_pool2d_with_argmax").set_attr<FOpName>("FOpName", [] {
-  return String("nn.max_pool2d_with_argmax");
-});
+RELAY_REGISTER_OP("nn.max_pool2d_with_argmax")
+    .set_attr<FOpName>("FOpName", MaxPool2dWithArgmaxProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Multiply profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame MultiplyProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetEltwiseCalAmountCommon(call_node, "mul");
 }
 
 AiTraceDataFrame MultiplyProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("multiply")
     .set_attr<FCalAmount>("FCalAmount", MultiplyProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("multiply").set_attr<FMemory>("FMemory", MultiplyProfiler::GetMemory);
-RELAY_REGISTER_OP("multiply").set_attr<FOpName>("FOpName", [] { return String("multiply"); });
+RELAY_REGISTER_OP("multiply").set_attr<FOpName>("FOpName", MultiplyProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // PRelu profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame PreluProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetReluCalAmountCommon(call_node);
 }
 
@@ -922,13 +951,14 @@ AiTraceDataFrame PreluProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_shape);
 
   res = mi.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 RELAY_REGISTER_OP("nn.prelu")
     .set_attr<FCalAmount>("FCalAmount", PreluProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.prelu").set_attr<FMemory>("FMemory", PreluProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.prelu").set_attr<FOpName>("FOpName", [] { return String("nn.prelu"); });
+RELAY_REGISTER_OP("nn.prelu").set_attr<FOpName>("FOpName", PreluProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Proposal profiler implementation
@@ -1017,19 +1047,20 @@ AiTraceDataFrame ProposalProfiler::GetCalculationAmount(const Call& call_node) {
   cai.exp *= batch;
   cai.comp *= batch;
   res = cai.GetIndicatorMap();
+
+  SetLayerName(call_node);
   return res;
 }
 
 AiTraceDataFrame ProposalProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("vision.proposal")
     .set_attr<FCalAmount>("FCalAmount", ProposalProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("vision.proposal").set_attr<FMemory>("FMemory", ProposalProfiler::GetMemory);
-RELAY_REGISTER_OP("vision.proposal").set_attr<FOpName>("FOpName", [] {
-  return String("vision.proposal");
-});
+RELAY_REGISTER_OP("vision.proposal").set_attr<FOpName>("FOpName", ProposalProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // PSRoiPooling profiler implementation
@@ -1082,10 +1113,13 @@ AiTraceDataFrame PsroipoolingProfiler::GetCalculationAmount(const Call& call_nod
   cai.exp *= batch;
   cai.comp *= batch;
   res = cai.GetIndicatorMap();
+
+  SetLayerName(call_node);
   return res;
 }
 
 AiTraceDataFrame PsroipoolingProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
@@ -1093,42 +1127,45 @@ RELAY_REGISTER_OP("vision.psroipooling")
     .set_attr<FCalAmount>("FCalAmount", PsroipoolingProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("vision.psroipooling")
     .set_attr<FMemory>("FMemory", PsroipoolingProfiler::GetMemory);
-RELAY_REGISTER_OP("vision.psroipooling").set_attr<FOpName>("FOpName", [] {
-  return String("vision.psroipooling");
-});
+RELAY_REGISTER_OP("vision.psroipooling")
+    .set_attr<FOpName>("FOpName", PsroipoolingProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Relu profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame ReluProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetReluCalAmountCommon(call_node);
 }
 
 AiTraceDataFrame ReluProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("nn.relu").set_attr<FCalAmount>("FCalAmount", ReluProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.relu").set_attr<FMemory>("FMemory", ReluProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.relu").set_attr<FOpName>("FOpName", [] { return String("nn.relu"); });
+RELAY_REGISTER_OP("nn.relu").set_attr<FOpName>("FOpName", ReluProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Reshape profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame ReshapeProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetZeroCalAmountCommon(call_node);
 }
 
 AiTraceDataFrame ReshapeProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("reshape").set_attr<FCalAmount>("FCalAmount",
                                                   ReshapeProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("reshape").set_attr<FMemory>("FMemory", ReshapeProfiler::GetMemory);
-RELAY_REGISTER_OP("reshape").set_attr<FOpName>("FOpName", [] { return String("reshape"); });
+RELAY_REGISTER_OP("reshape").set_attr<FOpName>("FOpName", ReshapeProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // RoiPool profiler implementation
@@ -1178,19 +1215,19 @@ AiTraceDataFrame RoiPoolProfiler::GetCalculationAmount(const Call& call_node) {
   cai.comp *= batch;
 
   res = cai.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 AiTraceDataFrame RoiPoolProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("vision.roi_pool")
     .set_attr<FCalAmount>("FCalAmount", RoiPoolProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("vision.roi_pool").set_attr<FMemory>("FMemory", RoiPoolProfiler::GetMemory);
-RELAY_REGISTER_OP("vision.roi_pool").set_attr<FOpName>("FOpName", [] {
-  return String("vision.roi_pool");
-});
+RELAY_REGISTER_OP("vision.roi_pool").set_attr<FOpName>("FOpName", RoiPoolProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Sigmoid profiler implementation
@@ -1213,17 +1250,19 @@ AiTraceDataFrame SigmoidProfiler::GetCalculationAmount(const Call& call_node) {
   cai.add = num_inputs;
   cai.div = num_inputs;
   res = cai.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 AiTraceDataFrame SigmoidProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("sigmoid").set_attr<FCalAmount>("FCalAmount",
                                                   SigmoidProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("sigmoid").set_attr<FMemory>("FMemory", SigmoidProfiler::GetMemory);
-RELAY_REGISTER_OP("sigmoid").set_attr<FOpName>("FOpName", [] { return String("sigmoid"); });
+RELAY_REGISTER_OP("sigmoid").set_attr<FOpName>("FOpName", SigmoidProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Softmax profiler implementation
@@ -1248,23 +1287,26 @@ AiTraceDataFrame SoftmaxProfiler::GetCalculationAmount(const Call& call_node) {
   cai.add = (num_inputs / axis_shape - 1) * axis_shape;
   cai.div = num_inputs;
   res = cai.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 AiTraceDataFrame SoftmaxProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("nn.softmax")
     .set_attr<FCalAmount>("FCalAmount", SoftmaxProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.softmax").set_attr<FMemory>("FMemory", SoftmaxProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.softmax").set_attr<FOpName>("FOpName", [] { return String("nn.softmax"); });
+RELAY_REGISTER_OP("nn.softmax").set_attr<FOpName>("FOpName", SoftmaxProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Split profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame SplitProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetZeroCalAmountCommon(call_node);
 }
 
@@ -1281,18 +1323,20 @@ AiTraceDataFrame SplitProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(input_shape);
 
   res = mi.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 RELAY_REGISTER_OP("split").set_attr<FCalAmount>("FCalAmount", SplitProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("split").set_attr<FMemory>("FMemory", SplitProfiler::GetMemory);
-RELAY_REGISTER_OP("split").set_attr<FOpName>("FOpName", [] { return String("split"); });
+RELAY_REGISTER_OP("split").set_attr<FOpName>("FOpName", SplitProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // StridedSlice profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame StridedSliceProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetZeroCalAmountCommon(call_node);
 }
 
@@ -1308,15 +1352,14 @@ AiTraceDataFrame StridedSliceProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_shape);
 
   res = mi.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 RELAY_REGISTER_OP("strided_slice")
     .set_attr<FCalAmount>("FCalAmount", StridedSliceProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("strided_slice").set_attr<FMemory>("FMemory", StridedSliceProfiler::GetMemory);
-RELAY_REGISTER_OP("strided_slice").set_attr<FOpName>("FOpName", [] {
-  return String("strided_slice");
-});
+RELAY_REGISTER_OP("strided_slice").set_attr<FOpName>("FOpName", StridedSliceProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Tanh profiler implementation
@@ -1340,22 +1383,25 @@ AiTraceDataFrame TanhProfiler::GetCalculationAmount(const Call& call_node) {
   cai.sub = 2 * num_inputs;
   cai.div = num_inputs;
   res = cai.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 AiTraceDataFrame TanhProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("tanh").set_attr<FCalAmount>("FCalAmount", TanhProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("tanh").set_attr<FMemory>("FMemory", TanhProfiler::GetMemory);
-RELAY_REGISTER_OP("tanh").set_attr<FOpName>("FOpName", [] { return String("tanh"); });
+RELAY_REGISTER_OP("tanh").set_attr<FOpName>("FOpName", TanhProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // Transpose profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame TransposeProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetZeroCalAmountCommon(call_node);
 }
 
@@ -1374,32 +1420,33 @@ AiTraceDataFrame TransposeProfiler::GetMemory(const Call& call_node) {
   mi.output += GetCartesianProd(output_shape);
 
   res = mi.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 RELAY_REGISTER_OP("transpose")
     .set_attr<FCalAmount>("FCalAmount", TransposeProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("transpose").set_attr<FMemory>("FMemory", TransposeProfiler::GetMemory);
-RELAY_REGISTER_OP("transpose").set_attr<FOpName>("FOpName", [] { return String("transpose"); });
+RELAY_REGISTER_OP("transpose").set_attr<FOpName>("FOpName", TransposeProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // unpooling profiler implementation
 //------------------------------------------------------------------------------
 
 AiTraceDataFrame UnpoolingProfiler::GetCalculationAmount(const Call& call_node) {
+  SetLayerName(call_node);
   return GetZeroCalAmountCommon(call_node);
 }
 
 AiTraceDataFrame UnpoolingProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("vision.unpooling")
     .set_attr<FCalAmount>("FCalAmount", UnpoolingProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("vision.unpooling").set_attr<FMemory>("FMemory", UnpoolingProfiler::GetMemory);
-RELAY_REGISTER_OP("vision.unpooling").set_attr<FOpName>("FOpName", [] {
-  return String("vision.unpooling");
-});
+RELAY_REGISTER_OP("vision.unpooling").set_attr<FOpName>("FOpName", UnpoolingProfiler::GetLayerName);
 
 //------------------------------------------------------------------------------
 // upsampling profiler implementation
@@ -1449,19 +1496,19 @@ AiTraceDataFrame UpsamplingProfiler::GetCalculationAmount(const Call& call_node)
   cai.comp *= o_batch;
 
   res = cai.GetIndicatorMap();
+  SetLayerName(call_node);
   return res;
 }
 
 AiTraceDataFrame UpsamplingProfiler::GetMemory(const Call& call_node) {
+  SetLayerName(call_node);
   return GetMemoryCommon(call_node);
 }
 
 RELAY_REGISTER_OP("nn.upsampling")
     .set_attr<FCalAmount>("FCalAmount", UpsamplingProfiler::GetCalculationAmount);
 RELAY_REGISTER_OP("nn.upsampling").set_attr<FMemory>("FMemory", UpsamplingProfiler::GetMemory);
-RELAY_REGISTER_OP("nn.upsampling").set_attr<FOpName>("FOpName", [] {
-  return String("nn.upsampling");
-});
+RELAY_REGISTER_OP("nn.upsampling").set_attr<FOpName>("FOpName", UpsamplingProfiler::GetLayerName);
 
 }  // namespace aitrace
 }  // namespace relay

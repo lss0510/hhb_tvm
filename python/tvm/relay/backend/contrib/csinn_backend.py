@@ -155,3 +155,18 @@ class QuantCalculator(object):
         """
         data = self._convert_and_check_data(data)
         return _csinn.QuantizeBias(data, target_dtype, input_quant_params, weight_quant_params)
+
+
+def llm_quantize_block_32(data, dim_count, dim, mtype):
+    """_summary_
+
+    Args:
+        data (_type_): _description_
+        dim_count (_type_): _description_
+        dim (_type_): _description_
+        mtype (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    return _csinn.llm_quantize_block_32(data, dim_count, dim, mtype)

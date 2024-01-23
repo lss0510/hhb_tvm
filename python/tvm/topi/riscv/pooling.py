@@ -18,7 +18,13 @@
 """Schedule for pooling operators"""
 from tvm import te, tir
 from .. import tag
-from .utils import get_simd_32bit_lanes, load_vec, intrin_mul_vf, rv_intrin_dtype
+from .utils import (
+    get_simd_32bit_lanes,
+    load_vec,
+    intrin_mul_vf,
+    rv_intrin_dtype,
+    get_simd_16bit_lanes,
+)
 
 
 def intrin_sum(l, dtype):
@@ -65,7 +71,10 @@ def intrin_sum(l, dtype):
 
 
 def _parallel_sch(sch_pool, oshape, do_vectorize=False):
-    vl = get_simd_32bit_lanes()
+    if sch_pool.op.input_tensors[0].dtype == "float32":
+        vl = get_simd_32bit_lanes()
+    else:
+        vl = get_simd_16bit_lanes()
 
     def vectorize(fused_axis, num_parallel_axis, vectorize_limit=64):
         """Internal vectorization utility function."""
@@ -158,7 +167,10 @@ def schedule_pool(outs, attrs, layout):
             do_vectorize &= all(attrs.padding) == 0
             do_vectorize &= len(outs[0].shape) == 5
             last_axis_length = s[OP.output(0)].op.axis[-1].dom.extent.value
-            vl = get_simd_32bit_lanes()
+            if outs[0].dtype == "float32":
+                vl = get_simd_32bit_lanes()
+            else:
+                vl = get_simd_16bit_lanes()
             do_vectorize &= vl >= last_axis_length
             _schedule(PaddedInput, Pool, do_vectorize)
             if OP != outs[0].op:
@@ -224,7 +236,10 @@ def schedule_adaptive_pool(outs):
                 reduce_axes = s[Pool].op.reduce_axis
                 if "sum" in s[Pool].op.tag:
                     inner_length = s[Pool].op.axis[-1].dom.extent.value
-                    vl = get_simd_32bit_lanes()
+                    if outs[0].dtype == "float32":
+                        vl = get_simd_32bit_lanes()
+                    else:
+                        vl = get_simd_16bit_lanes()
                     if vl == inner_length:
                         avg_value_h = reduce_axes[0].dom.extent.b.b.value
                         avg_value_w = reduce_axes[1].dom.extent.b.b.value

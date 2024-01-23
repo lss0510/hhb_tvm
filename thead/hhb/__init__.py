@@ -33,3 +33,5 @@ from .core.arguments_manage import generate_hhb_default_config
 from .core.common import convert_invalid_symbol
 from .core.common import print_top5
 from .main import set_debug_level
+
+__version__ = "2.9.5"

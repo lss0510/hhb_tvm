@@ -23,7 +23,7 @@ from tvm import autotvm
 from tvm import te
 from tvm.autotvm.task.space import SplitEntity, OtherOptionEntity
 
-from .utils import get_simd_32bit_lanes, intrin_macc_vf
+from .utils import get_simd_32bit_lanes, intrin_macc_vf, get_simd_16bit_lanes
 from ..utils import get_const_tuple
 from ..nn.pad import pad
 from .. import tag
@@ -62,7 +62,10 @@ def _get_default_config(
 
 
 def _fallback_schedule(cfg, wkl):
-    simd_width = get_simd_32bit_lanes()
+    if wkl.in_dtype == "float32":
+        simd_width = get_simd_32bit_lanes()
+    else:
+        simd_width = get_simd_16bit_lanes()
     pad_left, pad_right = wkl.padl, wkl.padr
     stride_w = wkl.stride_w
     out_width = (wkl.width + pad_left + pad_right - wkl.kernel_w) // stride_w + 1

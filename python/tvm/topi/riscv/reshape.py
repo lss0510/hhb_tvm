@@ -17,7 +17,7 @@
 # pylint: disable=invalid-name,too-many-locals,unused-variable
 """riscv reshape operator"""
 from tvm import te
-from .utils import get_simd_32bit_lanes
+from .utils import get_simd_32bit_lanes, get_simd_16bit_lanes
 from .utils import intrin_reshape
 
 
@@ -46,7 +46,10 @@ def _schedule_reshape(s, out):
     last_axis = s[out].op.axis[-1]
     dtype = s[out].op.input_tensors[0].dtype
 
-    simd_width = get_simd_32bit_lanes()
+    if dtype == "float32":
+        simd_width = get_simd_32bit_lanes()
+    else:
+        simd_width = get_simd_16bit_lanes()
     factor = 1
     for tmp in range(simd_width, 0, -1):
         if out.shape[-1] % tmp == 0 and input_shape[-1] % tmp == 0:

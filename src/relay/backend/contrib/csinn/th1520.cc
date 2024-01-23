@@ -162,6 +162,12 @@ void CodegenTH1520::EmitSessionSetup(void) {
   if (debug_level_ == "INFO") {
     func_def_.OneLine("sess->debug_level = CSINN_DEBUG_LEVEL_INFO;");
   }
+  if (std::find(trace_.begin(), trace_.end(), "csinn_acc") != trace_.end()) {
+    func_def_.OneLine(
+        "sess->profiler_level = CSINN_PROFILER_LEVEL_TRACE + CSINN_PROFILER_LEVEL_DUMP;");
+  } else if (std::find(trace_.begin(), trace_.end(), "csinn") != trace_.end()) {
+    func_def_.OneLine("sess->profiler_level = CSINN_PROFILER_LEVEL_TRACE;");
+  }
   func_def_.OneLine("csinn_session_init(sess);");
 
   t0 << "csinn_set_input_number(" << ext_func_args_.size() << ", sess);";
@@ -266,9 +272,6 @@ void CodegenTH1520::EmitNBGSetup(void) {
     bm_graph.set_input(input_tensor);
   }
   string q_scheme = cfg->quantization_scheme;
-  if (q_scheme == "CSINN_QUANT_INT8_ORIGINAL") {
-    q_scheme = "CSINN_QUANT_INT8_ASYM";
-  }
 
   bm_graph.sess->base_quant_type = CSINNTensorQuantStringToEnum(q_scheme);
   bm_graph.sess->base_api = CSINN_TH1520;

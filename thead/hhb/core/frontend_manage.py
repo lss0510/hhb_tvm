@@ -418,6 +418,7 @@ def import_model(path, model_format=None, input_name=None, input_shape=None, out
     mod, params = frontend.load(path, input_name, input_shape, output_name)
     mod = relay.transform.InferType()(mod)
     mod, params = remove_invalid_symbol(mod, params)
+    mod = relay.transform.InferType()(mod)
 
     return mod, params
 

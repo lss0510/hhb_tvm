@@ -92,7 +92,7 @@ struct output_element {
   std::vector<string> names;
 };
 
-#define HHB_VERSION "2.8.1"
+#define HHB_VERSION "2.9.5"
 
 /*! \brief Attributes to store the options for CSI-NN2 */
 struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
@@ -168,6 +168,7 @@ struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
   double high_bound_scale;
 
   bool show_session_run_time;
+  Array<String> trace;
 
   TVM_DECLARE_ATTRS(CSINNConfigNode, "ext.attrs.CSINNConfigNode") {
     TVM_ATTR_FIELD(ahead_of_time).set_default("unset");
@@ -233,6 +234,7 @@ struct CSINNConfigNode : public tvm::AttrsNode<CSINNConfigNode> {
     TVM_ATTR_FIELD(low_bound_scale).set_default(1.0);
     TVM_ATTR_FIELD(high_bound_scale).set_default(1.0);
     TVM_ATTR_FIELD(show_session_run_time).set_default(false);
+    TVM_ATTR_FIELD(trace).set_default(Array<String>({}));
   }
 };
 
@@ -270,6 +272,8 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
     this->hybrid_layer_name = __convert_string_list(opt_cfg->hybrid_layer_name);
     this->auto_hybrid_quantization = opt_cfg->auto_hybrid_quantization;
     this->show_session_run_time = opt_cfg->show_session_run_time;
+
+    this->trace_ = __convert_string_list(opt_cfg->trace);
 
     if (this->target_ == "th1520" && !auto_hybrid_quantization) {
       target_name_ = "CSINN_TH1520";
@@ -351,8 +355,6 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       cfg->quantization_scheme = "CSINN_QUANT_UINT8_ASYM";
     } else if (opt_cfg->quantization_scheme == "int8_sym") {
       cfg->quantization_scheme = "CSINN_QUANT_INT8_SYM";
-    } else if (opt_cfg->quantization_scheme == "int8_original") {
-      cfg->quantization_scheme = "CSINN_QUANT_INT8_ORIGINAL";
     } else if (opt_cfg->quantization_scheme == "int8_asym") {
       cfg->quantization_scheme = "CSINN_QUANT_INT8_ASYM";
     } else if (opt_cfg->quantization_scheme == "int8_asym_w_sym") {
@@ -659,6 +661,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
 
   std::vector<int> input_memory_type;
   std::vector<int> output_memory_type;
+  std::vector<std::string> trace_;
 
   /*! \brief Hybird quantization buffers. */
   string hybrid_quantization_scheme{"unset"};
@@ -728,16 +731,11 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       config->nbit_activation = 32;
       config->weight_quantized_type = "asym";
       config->activate_quantized_type = "asym";
-    } else if (hybrid_quantization_scheme == "int8_sym" ||
-               hybrid_quantization_scheme == "int8_original") {
+    } else if (hybrid_quantization_scheme == "int8_sym") {
       config->dtype_input = "int8_t";
       config->dtype_weight = "int8_t";
       config->dtype_activation = "int32_t";
       config->quantization_scheme = "CSINN_QUANT_INT8_SYM";
-      if (hybrid_quantization_scheme == "int8_original") {
-        config->quantization_scheme = "CSINN_QUANT_INT8_ORIGINAL";
-      }
-
       config->nbit_input = 8;
       config->nbit_weight = 8;
       config->nbit_activation = 32;
@@ -836,6 +834,8 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       csi_dtype = "CSINN_DTYPE_BOOL";
     } else if (dtype == "int16_t" || dtype == "int16") {
       csi_dtype = "CSINN_DTYPE_INT16";
+    } else if (dtype == "int64_t" || dtype == "int64") {
+      csi_dtype = "CSINN_DTYPE_INT64";
     } else {
       LOG(FATAL) << "Unsupported dtype " << dtype;
     }
@@ -1003,8 +1003,7 @@ class CodegenCSINN : public HHBExprVisitor, public Optimize {
       return CSINN_DTYPE_UINT8;
     } else if (str == "CSINN_QUANT_INT8_SYM") {
       return CSINN_DTYPE_INT8;
-    } else if (str == "CSINN_QUANT_INT8_ASYM" || str == "CSINN_QUANT_INT8_ORIGINAL" ||
-               str == "CSINN_QUANT_INT8_ASYM_W_SYM") {
+    } else if (str == "CSINN_QUANT_INT8_ASYM" || str == "CSINN_QUANT_INT8_ASYM_W_SYM") {
       return CSINN_DTYPE_INT8;
     } else if (str == "CSINN_QUANT_INT16_SYM") {
       return CSINN_DTYPE_INT16;

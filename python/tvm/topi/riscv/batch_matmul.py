@@ -26,6 +26,7 @@ from ..transform import layout_transform
 from ..utils import traverse_inline, get_const_tuple, get_max_power2_factor
 from .dense import dense_vnni_schedule
 from .injective import schedule_injective_from_existing
+from .utils import get_simd_32bit_lanes, intrin_batch_macc_vf, intrin_load
 
 
 @autotvm.register_topi_compute("batch_matmul_vnni.riscv")
@@ -163,39 +164,47 @@ def schedule_batch_matmul(cfg, outs):
             A, B = op.input_tensors
             if len(B.op.input_tensors) == 1 and B.op.input_tensors[0] == A:
                 s[B].compute_inline()
-            _, M, K = get_const_tuple(A.shape)
-            _, _, N = get_const_tuple(C.shape)
-
-            if op not in s.outputs:
-                s[C].compute_inline()
-                O = outs[0]
-            else:
-                O = C
 
             CC = s.cache_write(C, "global")
-
-            # create tuning space
-            cfg.define_split("tile_y", M, num_outputs=2)
-            cfg.define_split("tile_x", N, num_outputs=2)
-            cfg.define_split("tile_k", K, num_outputs=2)
-
-            b, y, x = s[O].op.axis
-            yo, yi = cfg["tile_y"].apply(s, O, y)
-            xo, xi = cfg["tile_x"].apply(s, O, x)
-            s[O].reorder(b, yo, xo, yi, xi)
-            bxyo = s[O].fuse(b, yo, xo)
-            s[O].parallel(bxyo)
-
-            s[CC].compute_at(s[O], bxyo)
+            b, y, x = s[C].op.axis
             (k,) = s[CC].op.reduce_axis
-            ko, ki = cfg["tile_k"].apply(s, CC, k)
 
-            Crf = s.rfactor(CC, ki)
-            s[Crf].compute_at(s[CC], s[CC].op.axis[0])
-            _, _, y, x = s[Crf].op.axis
-            s[Crf].fuse(y, x)
-            s[Crf].vectorize(s[Crf].op.axis[0])
-            s[O].pragma(bxyo, "auto_unroll_max_step", 16)
+            yo, yi = cfg["tile_y"].apply(s, C, y)
+            xo, xi = cfg["tile_x"].apply(s, C, x)
+            s[C].reorder(b, yo, xo, yi, xi)
+            xyo = s[C].fuse(yo, xo)
+            s[C].parallel(xyo)
+            s[C].unroll(yi)
+
+            factor = cfg["tile_x"].size[-1]
+            dtype = C.dtype
+            load = intrin_load(factor, dtype)
+            s[C].tensorize(xi, load)
+
+            s[CC].compute_at(s[C], xyo)
+            b, y, x = s[CC].op.axis
+            ko, ki = cfg["tile_k"].apply(s, CC, k)
+            s[CC].reorder(ko, ki, y, x)
+
+            transpose_form = op.name[-2:]
+            if transpose_form[0] == "T":
+                _, K, _ = get_const_tuple(A.shape)
+            else:
+                _, _, K = get_const_tuple(A.shape)
+            stride = (int)(K)
+            macc = intrin_batch_macc_vf(factor, transpose_form, stride, dtype)
+            s[CC].tensorize(x, macc)
+
+            tile_inner = cfg["tile_y"].size[-1]
+            if tile_inner > 1:
+                yo, yi = s[CC].split(y, tile_inner)
+                s[CC].reorder(ko, yo, ki, yi, x)
+                s[CC].unroll(yo)
+                s[CC].unroll(ki)
+                s[CC].unroll(yi)
+            else:
+                s[CC].unroll(ki)
+                s[CC].unroll(y)
 
     traverse_inline(s, outs[0].op, _callback)
     return s
@@ -216,11 +225,12 @@ def schedule_batch_matmul_vnni(cfg, outs):
 
 
 def _default_batch_matmul_config(cfg, M, N, K):
-    cfg["tile_k"] = SplitEntity([K // 16, 16])
-    x_bn = get_max_power2_factor(N, 8)
+    vec_width = get_simd_32bit_lanes()
+    x_bn = get_max_power2_factor(N, vec_width)
     cfg["tile_x"] = SplitEntity([N // x_bn, x_bn])
     y_bn = get_max_power2_factor(M, 8)
     cfg["tile_y"] = SplitEntity([M // y_bn, y_bn])
+    cfg["tile_k"] = SplitEntity([K, 1])
 
 
 def batch_matmul_blas_common(cfg, tensor_a, tensor_b, out_shape, trans_a, trans_b, lib):

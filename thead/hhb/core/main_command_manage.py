@@ -34,9 +34,10 @@ from tvm.relay.quantize._convert_to_csi import convert_to_csi_qnn, fuse_layer
 from tvm.relay.quantize.qnn2onnx import qnn_to_onnx
 from tvm.relay.quantize.qnn_transform import QNNConvertReshapeToFlatten
 
+from .llm_manage import llm_import, llm_quantize
 from .arguments_manage import ArgumentFilter, Config
 from .frontend_manage import import_model, insert_preprocess_node, get_io_info_from_onnx
-from .common import ensure_dir, AttributeDict, HHBException, generate_config_file
+from .common import ensure_dir, AttributeDict, HHBException, generate_config_file, to_json
 from .hhbir_manage import (
     HHBRelayIR,
     HHBQNNIR,
@@ -65,6 +66,9 @@ from .preprocess_manage import (
 )
 from .codegen_manage import collect_codegen_config, set_codegen_config
 from .simulate_manage import inference_model, inference_elf
+from .profiler_manage import aitrace_options, convert_tvm_trace2python, dump_profile_result
+
+from hhb.analysis.trace import HHBIRTrace
 
 
 LOG = 25
@@ -335,10 +339,32 @@ def driver_main_command(args_filter: ArgumentFilter):
     #
     # Execute '-E' command
     #
+
+    if args.llm:
+        if args.E:
+            logger.log(LOG, "Start import LLM")
+            llm_import(args.model_file, args.output)
+            logger.log(LOG, "Import model end...")
+            return 0
+
+        if args.Q:
+            logger.log(LOG, "Start quantize LLM")
+            llm_quantize(args.model_file, args.quantization_scheme, args.output)
+            logger.log(LOG, "Quantize model end...")
+            return 0
+
     logger.log(LOG, "Start import model.")
     mod, params = import_model(
         args.model_file, args.model_format, args.input_name, args.input_shape, args.output_name
     )
+
+    if args.trace and "relay" in args.trace:
+        # generate relay trace
+        options = aitrace_options(["cal", "mem"], "")
+        result = relay.analysis.get_aitrace_data(mod["main"], options)
+        result = convert_tvm_trace2python(result)
+        result = HHBIRTrace().imported_from(trace_type="relay", layers=result).to_dict()
+        to_json(result, os.path.join(args.output, "model_relay.trace.json"), with_format=False)
 
     if args.reorder_pixel_format:
         mod, params = reorder_pixel_format(mod, params)
@@ -444,6 +470,15 @@ def driver_main_command(args_filter: ArgumentFilter):
         qnn_ir = HHBQNNIR()
         qnn_ir.convert((mod, params), config_dict, dataset_list, args.board)
         logger.log(LOG, "Quantization completed!")
+
+        if args.trace and "qnn" in args.trace:
+            # generate qnn trace
+            options = aitrace_options(["cal", "mem"], "")
+            result = relay.analysis.qnn_aitrace_data(qnn_ir.get_model()[0]["main"], options)
+            result = convert_tvm_trace2python(result)
+            result = HHBIRTrace().imported_from(trace_type="qnn", layers=result).to_dict()
+            to_json(result, os.path.join(args.output, "model_qnn.trace.json"), with_format=False)
+
         if args.Q or args.save_temps:
             qnn_ir.save_model(args.output, args.preprocess_config, config_dict)
         if args.Q:

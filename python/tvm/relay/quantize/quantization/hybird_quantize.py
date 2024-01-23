@@ -45,7 +45,7 @@ def to_json(data, path):
 
 def prob_distribution(data):
     abs_data = np.abs(data)
-    return abs_data / np.sum(abs_data)
+    return abs_data / (np.sum(abs_data) + 1e-5)
 
 
 class LossBase(object):
@@ -137,7 +137,7 @@ class GiniLoss(LossBase):
         data = np.sort(data)
         index = np.arange(1, data.shape[0] + 1)
         n = data.size
-        gini = float(((np.sum((2 * index - n - 1) * data)) / (n * np.sum(data))))
+        gini = float(((np.sum((2 * index - n - 1) * data)) / (n * np.sum(data) + 1e-5)))
         return gini
 
 
@@ -154,7 +154,7 @@ class CosineSimilarity(LossBase):
         lhs_flatten = lhs.flatten()
         rhs_flatten = rhs.flatten()
         return np.dot(lhs_flatten, rhs_flatten) / (
-            np.linalg.norm(lhs_flatten) * (np.linalg.norm(rhs_flatten))
+            np.linalg.norm(lhs_flatten) * (np.linalg.norm(rhs_flatten)) + 1e-5
         )
 
 
@@ -295,14 +295,21 @@ class LayerQuantizatonInfo(object):
         self.quantization_schema = "uint8_asym"
         self.quantization_algorithm = "minmax"
         self.quantization_parameters = QuantParams()
+        self.float_result_path = None
+        self.quant_result_path = None
         self.loss = LossInfo()
 
     def to_dict(self):
+        """convert obj into dict"""
         res = collections.OrderedDict()
         res["name"] = self.name
         res["tensor_type"] = self.tensor_type
         res["quantization_schema"] = self.quantization_schema
         res["quantization_algorithm"] = self.quantization_algorithm
+        if self.float_result_path:
+            res["float_result_path"] = self.float_result_path
+        if self.quant_result_path:
+            res["quant_result_path"] = self.quant_result_path
         res["quantization_parameters"] = self.quantization_parameters.to_dict()
         res["loss"] = self.loss.to_dict()
         return res
@@ -380,6 +387,8 @@ class ModelQuantizationInfo(object):
     """Quantizaiton for the whole model."""
 
     def __init__(self):
+        self.source = "hhb"
+        self.trace_type = "acc"
         self.version = "2.0"
         self.calibration_dataset_num = 1
         self.layers_info: List[LayerQuantizatonInfo] = []
@@ -426,20 +435,12 @@ class ModelQuantizationInfo(object):
                 layer_float_data = np.array(float_outs[layer], dtype=np.float32)
                 layer_float_data = layer_float_data[:, o_idx]
                 if config["channel_quantization"]:
-                    layer_quant.loss.per_tensor = False
-                    layer_quant.loss.axis = 1
-
-                    data_shape = list(layer_float_data.shape)
-                    value_shape = (
-                        data_shape[: layer_quant.loss.axis + 1]
-                        + data_shape[layer_quant.loss.axis + 2 :]
-                    )
-                    layer_quant.quantization_parameters.origin_min_values = np.min(
-                        layer_float_data, axis=value_shape
-                    ).tolist()
-                    layer_quant.quantization_parameters.origin_max_values = np.max(
-                        layer_float_data, axis=value_shape
-                    ).tolist()
+                    layer_quant.quantization_parameters.origin_min_values = [
+                        np.min(layer_float_data).tolist()
+                    ]
+                    layer_quant.quantization_parameters.origin_max_values = [
+                        np.max(layer_float_data).tolist()
+                    ]
 
                 else:
                     layer_quant.quantization_parameters.origin_min_values = [
@@ -458,24 +459,26 @@ class ModelQuantizationInfo(object):
                         dump_dir = os.path.join(os.path.dirname(config["params_path"]), "dump")
                         if not os.path.exists(dump_dir):
                             os.makedirs(dump_dir)
+                        float_path = os.path.join(
+                            dump_dir,
+                            str(c_idx)
+                            + "_"
+                            + re.sub(r"[/:\s\.]", "_", curr_name)
+                            + "_float.tensor",
+                        )
+                        layer_quant.float_result_path = float_path
                         curr_float_value.tofile(
-                            os.path.join(
-                                dump_dir,
-                                str(c_idx)
-                                + "_"
-                                + re.sub(r"[/:\s\.]", "_", curr_name)
-                                + "_float.tensor",
-                            ),
+                            float_path,
                             "\n",
                         )
+
+                        quant_path = os.path.join(
+                            dump_dir,
+                            str(c_idx) + "_" + re.sub(r"[/:\s\.]", "_", curr_name) + "_qnn.tensor",
+                        )
+                        layer_quant.quant_result_path = quant_path
                         curr_qnn_value.tofile(
-                            os.path.join(
-                                dump_dir,
-                                str(c_idx)
-                                + "_"
-                                + re.sub(r"[/:\s\.]", "_", curr_name)
-                                + "_qnn.tensor",
-                            ),
+                            quant_path,
                             "\n",
                         )
 
@@ -509,6 +512,8 @@ class ModelQuantizationInfo(object):
     def to_dict(self):
         """Convert to dict"""
         res = collections.OrderedDict()
+        res["source"] = self.source
+        res["trace_type"] = self.trace_type
         res["version"] = self.version
         res["calibration_dataset_num"] = self.calibration_dataset_num
         res["layers_info"] = []
@@ -557,8 +562,8 @@ def get_quant_config(origin_config):
 def load_lib(module_factory, output_dir):
     """load built lib"""
     contrib_dir = os.path.dirname(os.path.realpath(os.path.expanduser(__file__)))
-    contrib_dir = os.path.realpath(os.path.join(contrib_dir, "..", "..", ".."))
-    source_dir = os.path.join(contrib_dir, "../hhb")
+    contrib_dir = os.path.realpath(os.path.join(contrib_dir, "..", "..", "..", ".."))
+    source_dir = os.path.join(contrib_dir, "..")
     include_path0 = os.path.join(source_dir, "install_nn2", "x86", "include", "csinn")
     include_path00 = os.path.join(source_dir, "install_nn2", "x86", "include", "shl_public")
     include_path1 = os.path.join(contrib_dir, "hhb", "install_nn2", "x86", "include", "csinn")
@@ -667,15 +672,17 @@ def inference_constant_node(dataset, layer_name, quant_config, tensor_type="acti
             quant_config["activate_quantized_type"],
         )
         shape = dataset[0][0].shape
+        dtype = dataset[0][0].dtype.name
 
         for b in dataset:
             call_data.append({input_name: b[0]})
     else:
         quant_params = get_weight_params(dataset, quant_config)
         shape = dataset.shape
+        dtype = dataset.dtype.name
 
         call_data.append({input_name: dataset})
-    node = relay.var(input_name, shape=shape, dtype="float32")
+    node = relay.var(input_name, shape=shape, dtype=dtype)
     node = relay.qnn.op.csi_reshape(
         node,
         shape,
@@ -702,6 +709,7 @@ class DumpLayerOutput(relay.expr_functor.ExprVisitor):
         self.config = config
         self.config["target"] = "x86_ref"
         self.config["hybrid_layer_name"] = []
+        self.config["trace"] = []
         self.dataset = dataset
         self.input_group_num = len(self.dataset)
 
@@ -778,7 +786,9 @@ class DumpLayerOutput(relay.expr_functor.ExprVisitor):
                 # for i_d in i_data:
                 for g in range(self.input_group_num):
                     call_dataset[g][arg_name] = i_data[g][0]
-                nargs.append(relay.var(arg_name, shape=i_data[0][0].shape, dtype="float32"))
+                nargs.append(
+                    relay.var(arg_name, shape=i_data[0][0].shape, dtype=i_data[0][0].dtype.name)
+                )
             elif isinstance(arg, Tuple):
                 tmp_args = []
                 for j in range(len(arg)):
@@ -788,7 +798,7 @@ class DumpLayerOutput(relay.expr_functor.ExprVisitor):
                         for g in range(self.input_group_num):
                             call_dataset[g][t_arg_name] = t_i_data[g][0]
                         inter_node = relay.var(
-                            t_arg_name, shape=t_i_data[0][0].shape, dtype="float32"
+                            t_arg_name, shape=t_i_data[0][0].shape, dtype=t_i_data[0][0].dtype.name
                         )
                         if call.op.name == "qnn.csi.concatenate":
                             reshape_q = call.attrs.q_params[j]

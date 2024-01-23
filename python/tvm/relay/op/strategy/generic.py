@@ -327,6 +327,39 @@ def add_strategy(attrs, inputs, out_type, target):
     return strategy
 
 
+@override_native_generic_func("subtract_strategy")
+def subtract_strategy(attrs, inputs, out_type, target):
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_topi_compute(topi.subtract),
+        wrap_topi_schedule(topi.generic.schedule_subtract),
+        name="subtract.generic",
+    )
+    return strategy
+
+
+@override_native_generic_func("multiply_strategy")
+def multiply_strategy(attrs, inputs, out_type, target):
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_topi_compute(topi.multiply),
+        wrap_topi_schedule(topi.generic.schedule_multiply),
+        name="multiply.generic",
+    )
+    return strategy
+
+
+@override_native_generic_func("divide_strategy")
+def divide_strategy(attrs, inputs, out_type, target):
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_topi_compute(topi.divide),
+        wrap_topi_schedule(topi.generic.schedule_divide),
+        name="divide.generic",
+    )
+    return strategy
+
+
 @override_native_generic_func("conv2d_strategy")
 def conv2d_strategy(attrs, inputs, out_type, target):
     """conv2d generic strategy"""

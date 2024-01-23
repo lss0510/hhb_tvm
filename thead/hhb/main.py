@@ -20,6 +20,7 @@ import logging
 import sys
 import json
 import os
+from typing import List
 
 import onnx
 from onnxsim import simplify
@@ -32,12 +33,17 @@ from tvm.relay.quantize.quantize_hhb import optimization_phase0
 from .core.arguments_manage import ArgumentManage, CommandType, HHBException, ArgumentFilter
 from .core.arguments_manage import update_arguments_by_file
 from .core.arguments_manage import Config
-from .core.common import collect_arguments_info
-from .core.common import ALL_ARGUMENTS_DESC
+from .core.common import collect_arguments_info, to_json, from_json
+from .core.common import ALL_ARGUMENTS_DESC, ensure_dir
 from .core.hhbir_manage import HHBRelayIR, HHBQNNIR, reorder_pixel_format, HHBBoardBuildRuntime
 from .core.preprocess_manage import hhb_preprocess
 from .core.frontend_manage import insert_preprocess_node
-from .core.profiler_manage import aitrace_options, convert_tvm_trace2python
+from .core.profiler_manage import (
+    aitrace_options,
+    convert_tvm_trace2python,
+    profile_trace_data,
+    profile_acc_loss,
+)
 from .core.quantization_manage import get_quant_scheme_from_qnn, convert_per_channel_scheme
 from .core.main_command_manage import print_model_info
 from .core.frontend_manage import get_io_info_from_onnx
@@ -45,6 +51,8 @@ from .importer import hhb_import
 from .quantizer import hhb_quantize
 from .codegen import hhb_codegen
 from .simulate import hhb_runner, hhb_inference
+
+from hhb.analysis.trace import merge_trace, HHBTrace, HHBIRTrace
 
 
 LOG = 25
@@ -451,7 +459,7 @@ class Compiler(object):
 class Profiler(object):
     """Collections of profiler tools for HHB."""
 
-    def __init__(self, compile_obj: Compiler) -> None:
+    def __init__(self, compile_obj: Compiler = None) -> None:
         self.compile_obj = compile_obj
 
     def get_cal_total(self, data):
@@ -486,9 +494,7 @@ class Profiler(object):
             Specified indicator data that will be extracted from model, selected from
             ["cal", "mem", "all"]
         tofile : str
-            Save result data into file, support for .aitrace and .json format.
-            .aitrace: binary format for result data that defiled by HHB;
-            .json: JSON format.
+            Save result data into file, support for .json format.
 
         Returns
         -------
@@ -513,10 +519,7 @@ class Profiler(object):
                 raise HHBException(
                     "Unsupport for {}".format(list(set(indicator) - set(supported_ind)))
                 )
-            if tofile and tofile.endswith(".aitrace"):
-                options = aitrace_options(indicator, tofile)
-            else:
-                options = aitrace_options(indicator, "")
+            options = aitrace_options(indicator, "")
             logger.debug('profile model with: "%s"', str(options))
 
             if params:
@@ -545,6 +548,74 @@ class Profiler(object):
             return result
         else:
             raise HHBException("Cannot analyse {} model".format(model_type))
+
+    def merge_trace(self, trace_files: List[str], output_dir="."):
+        for path in trace_files:
+            if not os.path.exists(path) or not path.endswith(".json"):
+                raise HHBException(f"File is not exists or is not .json file: {path}")
+
+        assert len(trace_files) == 2, "Only support for 2 json files."
+        merged_trace = merge_trace(trace_files)
+        target_path = os.path.join(output_dir, "model_merge.trace.json")
+        to_json(merged_trace.to_dict(), target_path)
+        return merged_trace
+
+    def profile_accuracy(self, trace_files: List[str], topk: int = 10, display=True, to_csv=None):
+        assert (
+            len(trace_files) == 2
+        ), f"Analysis accuracy need two .json files, but get {len(trace_files)}"
+        trace1 = from_json(trace_files[0])
+        trace2 = from_json(trace_files[1])
+
+        profile_acc_loss(trace1, trace2, topk=topk, to_csv=to_csv)
+
+    def profile_trace(
+        self,
+        trace_files: List[str],
+        profile_method: List[str] = None,
+        topk: int = 10,
+        output_type: List[str] = ["all"],
+        output_dir=".",
+    ):
+        logger = logging.getLogger("HHB")
+        for path in trace_files:
+            if not os.path.exists(path) or not path.endswith(".json"):
+                logger.warning("File is not exists or is not .json file, skipped: %s" % path)
+                continue
+
+            json_data = from_json(path)
+            if (
+                not json_data
+                or "otherData" not in json_data
+                or "source" not in json_data["otherData"]
+                or json_data["otherData"]["source"] not in ("hhb", "csinn")
+            ):
+                logger.warning("Unsupport for %s" % path)
+                continue
+
+            logger.log(LOG, "Processing %s..." % path)
+            output_dir = os.path.join(output_dir, os.path.splitext(os.path.basename(path))[0])
+            output_dir = ensure_dir(output_dir)
+            if "trace_type" in json_data["otherData"]:
+                # for relay/qnn
+                trace_data = HHBIRTrace().from_dict(json_data)
+
+                display = False
+                if "print" in output_type or "all" in output_type:
+                    display = True
+                tmp_dir = None
+                if "all" in output_type or "csv" in output_type:
+                    tmp_dir = output_dir
+                trace_data.profile(
+                    profile_method=profile_method,
+                    topk=topk,
+                    display=display,
+                    output_dir=tmp_dir,
+                )
+            else:
+                # for chrome trace
+                trace_data = HHBTrace().from_dict(json_data)
+                profile_trace_data(trace_data, profile_method, output_dir, output_type, topk)
 
 
 def _main(argv):

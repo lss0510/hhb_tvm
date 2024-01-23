@@ -18,7 +18,14 @@
 """riscv nn operators"""
 from tvm import te
 from ..utils import traverse_inline
-from .utils import get_simd_32bit_lanes, intrin_div, intrin_sub, intrin_sum, intrin_max
+from .utils import (
+    get_simd_32bit_lanes,
+    get_simd_16bit_lanes,
+    intrin_div,
+    intrin_sub,
+    intrin_sum,
+    intrin_max,
+)
 
 
 def _schedule_softmax(softmax_op, s, outs):
@@ -65,7 +72,11 @@ def _schedule_softmax(softmax_op, s, outs):
 
     if op_tag == "softmax_output":
         dtype = softmax_op.input_tensors[0].dtype
-        simd_width = get_simd_32bit_lanes()
+        if dtype == "float32":
+            simd_width = get_simd_32bit_lanes()
+        else:
+            simd_width = get_simd_16bit_lanes()
+
         factor = 1
         for tmp in range(simd_width, 0, -1):
             if exp.shape[-1] % tmp == 0:
@@ -203,7 +214,10 @@ def schedule_lrn(outs):
     """
     outs = [outs] if isinstance(outs, te.tensor.Tensor) else outs
     s = te.create_schedule([x.op for x in outs])
-    max_threads = get_simd_32bit_lanes()
+    if outs[0].dtype == "float32":
+        max_threads = get_simd_32bit_lanes()
+    else:
+        max_threads = get_simd_16bit_lanes()
 
     def _callback(op):
         if "sqr_sum" in op.tag:

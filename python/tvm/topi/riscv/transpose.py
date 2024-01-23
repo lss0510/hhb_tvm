@@ -17,7 +17,7 @@
 # pylint: disable=invalid-name,too-many-locals,unused-variable
 """riscv transpose operator"""
 from tvm import te
-from .utils import get_simd_32bit_lanes
+from .utils import get_simd_32bit_lanes, get_simd_16bit_lanes
 from .utils import intrin_layout_transform
 
 
@@ -45,8 +45,10 @@ def _schedule_transpose(s, out, axes):
     input_shape = s[out].op.input_tensors[0].shape
     dtype = s[out].op.input_tensors[0].dtype
     fused = s[out].fuse(*s[out].op.axis[0:length])
-
-    simd_width = get_simd_32bit_lanes()
+    if dtype == "float32":
+        simd_width = get_simd_32bit_lanes()
+    else:
+        simd_width = get_simd_16bit_lanes()
     factor = 1
     for tmp in range(simd_width, 0, -1):
         if out.shape[-1] % tmp == 0:

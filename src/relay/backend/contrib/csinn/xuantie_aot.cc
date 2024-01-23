@@ -122,6 +122,9 @@ static string callnode_name(const CallNode* call) {
   } else if (IsOp(call, "qnn.csi.upsampling")) {
     auto attr = call->attrs.as<relay::qnn::QnnCSIUpSamplingAttrs>();
     ret = attr->layer_name.c_str();
+  } else if (IsOp(call, "qnn.csi.matmul")) {
+    auto attr = call->attrs.as<relay::qnn::QnnCSIMatMulAttrs>();
+    ret = attr->layer_name.c_str();
   } else {
     LOG(WARNING) << "Skip invalid call node, rename as: Unsupport_call_node_name";
     ret = "Unsupport_call_node_name";
@@ -384,6 +387,29 @@ RelayExpr XuanTie_AOT::tvm_realy_expr(const RelayExpr& expr, string* name) {
     *name = attr->layer_name.c_str();
     op = relay::Op::Get("transpose");
     ret = relay::Call(op, args, Attrs(transpose_attr));
+  } else if (relay::backend::IsOp(subgraph, "qnn.csi.subtract")) {
+    auto attr = subgraph->attrs.as<relay::qnn::QnnBinaryOpAttrs>();
+    *name = attr->layer_name.c_str();
+    op = relay::Op::Get("subtract");
+    ret = relay::Call(op, args);
+  } else if (relay::backend::IsOp(subgraph, "qnn.csi.mul")) {
+    auto attr = subgraph->attrs.as<relay::qnn::QnnBinaryOpAttrs>();
+    *name = attr->layer_name.c_str();
+    op = relay::Op::Get("multiply");
+    ret = relay::Call(op, args);
+  } else if (relay::backend::IsOp(subgraph, "qnn.csi.div")) {
+    auto attr = subgraph->attrs.as<relay::qnn::QnnBinaryOpAttrs>();
+    *name = attr->layer_name.c_str();
+    op = relay::Op::Get("divide");
+    ret = relay::Call(op, args);
+  } else if (relay::backend::IsOp(subgraph, "qnn.csi.matmul")) {
+    auto attr = subgraph->attrs.as<relay::qnn::QnnCSIMatMulAttrs>();
+    auto batch_matmul_attr = make_object<BatchMatmulAttrs>();
+    batch_matmul_attr->transpose_a = attr->transpose_a;
+    batch_matmul_attr->transpose_b = attr->transpose_b;
+    *name = attr->layer_name.c_str();
+    op = relay::Op::Get("nn.batch_matmul");
+    ret = relay::Call(op, {args[0], args[1]}, Attrs(batch_matmul_attr));
   } else {
     LOG(WARNING) << "Skip invalid qnn subgraph, start with op: " << AsText(subgraph->op, false);
     *name = "Unsupport subgraph";

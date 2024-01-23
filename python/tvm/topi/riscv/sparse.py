@@ -21,7 +21,7 @@ from tvm import te, tir, autotvm
 
 from ..transform import reshape
 from ..utils import traverse_inline, get_const_int
-from .utils import get_simd_32bit_lanes
+from .utils import get_simd_32bit_lanes, get_simd_16bit_lanes
 
 
 def schedule_sparse_dense(outs):
@@ -29,7 +29,10 @@ def schedule_sparse_dense(outs):
     s = te.create_schedule([x.op for x in outs])
 
     def _callback(op):
-        simd_width = get_simd_32bit_lanes()
+        if op.input_tensors[0].dtype == "float32":
+            simd_width = get_simd_32bit_lanes()
+        else:
+            simd_width = get_simd_16bit_lanes()
         if op.tag == "sparse_dense_sp_lhs_csrmm" or op.tag == "sparse_dense_sp_lhs_csrmm":
             (y_o, y_i) = s[op].split(s[op].op.axis[1], 2)
             fused = s[op].fuse(s[op].op.axis[0], y_o)

@@ -331,18 +331,7 @@ class QNNDumpToJson:
         dtj = QNNConvertDict()
         dtj.visit(func)
         with open(self.tofile, "w") as f:
-            try:
-                import jsbeautifier
-
-                options = jsbeautifier.default_options()
-                options.indent_size = 2
-                res = jsbeautifier.beautify(json.dumps(dtj.qnn_data), options)
-                f.write(res)
-            except ImportError:
-                logging.warning(
-                    "Recommend installing jsbeautifier to get better formatted JSON file."
-                )
-                json.dump(dtj.qnn_data, f, indent=2)
+            json.dump(dtj.qnn_data, f, indent=2)
         return func
 
 

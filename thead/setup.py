@@ -20,7 +20,7 @@
 from setuptools import find_packages
 from setuptools import setup
 
-__version__ = "2.8.1"
+__version__ = "2.9.5"
 
 
 def get_package_data_files():
@@ -94,6 +94,8 @@ setup(
         "onnxsim",
         "onnx",
         "jsbeautifier",
+        "transformers",
+        "pandas",
     ],
     packages=find_packages(),
     package_dir={"hhb": "hhb"},

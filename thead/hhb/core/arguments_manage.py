@@ -216,6 +216,12 @@ class CommonArguments(ArgumentsBase):
             default="hhb_out",
             help="The directory that holds the outputs.",
         )
+        self.trace = ArgSpecHelper(
+            name="--trace",
+            choices=["relay", "qnn", "csinn", "csinn_acc"],
+            nargs="+",
+            help="Generate unify tracing data.",
+        )
 
     @property
     def name(self):
@@ -338,6 +344,8 @@ class QuantizeArguments(ArgumentsBase):
             name="--quantization-scheme",
             abbr_name="-qs",
             choices=[
+                "q4_0",
+                "q8_0",
                 "int4_asym_w_sym",
                 "uint8_asym",
                 "int8_asym",
@@ -405,7 +413,6 @@ class QuantizeArguments(ArgumentsBase):
                 "uint8_asym",
                 "int8_asym",
                 "int8_sym",
-                "int8_original",
                 "int8_asym_w_sym",
                 "int16_sym",
                 "float16",
@@ -938,7 +945,7 @@ class ProfilerArguments(ArgumentsBase):
         )
         self.output_type = ArgSpecHelper(
             name="--output-type",
-            choices=["json", "binary", "print", "total", "all"],
+            choices=["json", "print", "total", "all", "csv"],
             default="total",
             nargs="+",
             help="How to show results, default is show summary result.",
@@ -947,20 +954,42 @@ class ProfilerArguments(ArgumentsBase):
             name="--arch",
             choices=[
                 "relay",
+                "qnn",
                 "npuperf",
             ],
             type=str,
             help="Target architecture for profiling.",
         )
-        self.tracing = ArgSpecHelper(
-            name="--tracing",
-            action="store_true",
-            help="Generate unify tracing data.",
-        )
         self.arch_config = ArgSpecHelper(
             name="--arch-config",
             type=str,
             help="Configurable parameters for specified architecture. Supported file type: .json.",
+        )
+        self.merge_trace = ArgSpecHelper(
+            name="--merge-trace",
+            action="store_true",
+            help="Merge multi trace files into one file.",
+        )
+        self.topk = ArgSpecHelper(
+            name="--topk",
+            type=int,
+            default=10,
+            help="Show top k results.",
+        )
+        self.profile_method = ArgSpecHelper(
+            name="--profile-method",
+            choices=[
+                "events_by_group",
+                "events_all",
+                "kernel_by_group",
+                "kernel_all",
+                "sorted_by_macc",
+                "sorted_by_flops",
+                "sorted_by_total_mem",
+                "accuracy_loss",
+            ],
+            nargs="+",
+            help="How to profile trace data, support for multi-values(seperate by space).",
         )
 
     @property
@@ -1009,6 +1038,12 @@ class MainArguments(ArgumentsBase):
             abbr_name="-f",
             nargs="+",
             help="Path to the input model file, can pass multi files",
+        )
+        self.llm = ArgSpecHelper(
+            name="--llm",
+            action="store_true",
+            help="LLM name is useful",
+            hidden=True,
         )
         self.save_temps = ArgSpecHelper(
             name="--save-temps", action="store_true", help="Save temp files."

@@ -83,6 +83,12 @@ void CodegenHTH1520::EmitSessionSetup(void) {
   if (debug_level_ == "INFO") {
     func_def_.OneLine("sess->debug_level = CSINN_DEBUG_LEVEL_INFO;");
   }
+  if (std::find(trace_.begin(), trace_.end(), "csinn_acc") != trace_.end()) {
+    func_def_.OneLine(
+        "sess->profiler_level = CSINN_PROFILER_LEVEL_TRACE + CSINN_PROFILER_LEVEL_DUMP;");
+  } else if (std::find(trace_.begin(), trace_.end(), "csinn") != trace_.end()) {
+    func_def_.OneLine("sess->profiler_level = CSINN_PROFILER_LEVEL_TRACE;");
+  }
   func_def_.OneLine("csinn_session_init(sess);");
 
   t0 << "csinn_set_input_number(" << ext_func_args_.size() << ", sess);";

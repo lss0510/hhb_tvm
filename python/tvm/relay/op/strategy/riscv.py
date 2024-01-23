@@ -159,6 +159,90 @@ def add_strategy_cpu(attrs, inputs, out_type, target):
     return strategy
 
 
+def wrap_subtract_schedule(topi_schedule, broadcast_flag):
+    """Wrap subtract schedule"""
+
+    def wrapper(attrs, outs, target):
+        with target:
+            return topi_schedule(outs, broadcast_flag)
+
+    return wrapper
+
+
+@subtract_strategy.register("riscv")
+def subtract_strategy_cpu(attrs, inputs, out_type, target):
+    """subtract riscv strategy"""
+    strategy = _op.OpStrategy()
+    if inputs[0].shape[-1] > inputs[1].shape[-1]:
+        broadcast_flag = 1
+    elif inputs[0].shape[-1] < inputs[1].shape[-1]:
+        broadcast_flag = 2
+    else:
+        broadcast_flag = 0
+    strategy.add_implementation(
+        wrap_topi_compute(topi.subtract),
+        wrap_subtract_schedule(topi.riscv.schedule_subtract, broadcast_flag),
+        name="subtract.riscv",
+    )
+    return strategy
+
+
+def wrap_multiply_schedule(topi_schedule, broadcast_flag):
+    """Wrap multiply schedule"""
+
+    def wrapper(attrs, outs, target):
+        with target:
+            return topi_schedule(outs, broadcast_flag)
+
+    return wrapper
+
+
+@multiply_strategy.register("riscv")
+def multiply_strategy_cpu(attrs, inputs, out_type, target):
+    """multiply riscv strategy"""
+    strategy = _op.OpStrategy()
+    if inputs[0].shape[-1] > inputs[1].shape[-1]:
+        broadcast_flag = 1
+    elif inputs[0].shape[-1] < inputs[1].shape[-1]:
+        broadcast_flag = 2
+    else:
+        broadcast_flag = 0
+    strategy.add_implementation(
+        wrap_topi_compute(topi.multiply),
+        wrap_multiply_schedule(topi.riscv.schedule_multiply, broadcast_flag),
+        name="multiply.riscv",
+    )
+    return strategy
+
+
+def wrap_divide_schedule(topi_schedule, broadcast_flag):
+    """Wrap divide schedule"""
+
+    def wrapper(attrs, outs, target):
+        with target:
+            return topi_schedule(outs, broadcast_flag)
+
+    return wrapper
+
+
+@divide_strategy.register("riscv")
+def divide_strategy_cpu(attrs, inputs, out_type, target):
+    """divide riscv strategy"""
+    strategy = _op.OpStrategy()
+    if inputs[0].shape[-1] > inputs[1].shape[-1]:
+        broadcast_flag = 1
+    elif inputs[0].shape[-1] < inputs[1].shape[-1]:
+        broadcast_flag = 2
+    else:
+        broadcast_flag = 0
+    strategy.add_implementation(
+        wrap_topi_compute(topi.divide),
+        wrap_divide_schedule(topi.riscv.schedule_divide, broadcast_flag),
+        name="divide.riscv",
+    )
+    return strategy
+
+
 @conv2d_strategy.register("riscv")
 def conv2d_strategy_cpu(attrs, inputs, out_type, target):
     """conv2d riscv strategy"""

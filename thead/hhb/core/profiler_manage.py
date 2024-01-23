@@ -21,10 +21,15 @@ import os
 import logging
 import json
 
+import numpy as np
+import pandas
+import tqdm
+
 import tvm
 from tvm.target import Target
 
 from .common import HHBException
+from hhb.analysis.trace import HHBTrace, HHBAccTrace, dump_dataframe
 
 
 # pylint: disable=invalid-name
@@ -223,3 +228,110 @@ class ArchConfigBase:
 
     def initialize(self):
         pass
+
+
+def profile_trace_data(trace, profile_method, output_dir, output_type, topk=10):
+    if "print" in output_type or "all" in output_type:
+        display = True
+    else:
+        display = False
+
+    to_csv = False
+    if "all" in output_type or "csv" in output_type:
+        to_csv = True
+
+    if profile_method is None or "events_by_group" in profile_method:
+        trace.profile_complete_events_by_group(
+            display=display,
+            to_csv=os.path.join(output_dir, "complte_events_summary.csv") if to_csv else None,
+        )
+
+    if profile_method is None or "events_all" in profile_method:
+        trace.profile_complete_events_all(
+            topk=topk,
+            display=display,
+            to_csv=os.path.join(output_dir, "complete_events_all.csv") if to_csv else None,
+        )
+
+    if profile_method is None or "kernel_by_group" in profile_method:
+        trace.profile_kernel_by_group(
+            topk=topk,
+            display=display,
+            to_csv=os.path.join(output_dir, "kernel_summary.csv") if to_csv else None,
+        )
+
+    if profile_method is None or "kernel_all" in profile_method:
+        trace.profile_kernel_all(
+            topk=topk,
+            display=display,
+            to_csv=os.path.join(output_dir, "kernel_all.csv") if to_csv else None,
+        )
+
+
+def profile_acc_loss(
+    trace1: dict, trace2: dict, topk=10, display=True, to_csv=None, show_progress=True
+):
+
+    float_trace, runtime_trace = None, None
+
+    if "trace_type" in trace1 and trace1["trace_type"] == "acc":
+        float_trace = HHBAccTrace().from_dict(trace1)
+
+    if "trace_type" in trace2 and trace2["trace_type"] == "acc":
+        float_trace = HHBAccTrace().from_dict(trace2)
+
+    if "otherData" in trace1 and trace1["otherData"]["source"] in ("hhb", "csinn"):
+        runtime_trace = HHBTrace().from_dict(trace1)
+
+    if "otherData" in trace2 and trace2["otherData"]["source"] in ("hhb", "csinn"):
+        runtime_trace = HHBTrace().from_dict(trace2)
+
+    assert float_trace is not None, "There is no float trace"
+    assert runtime_trace is not None, "There is no runtime trace"
+
+    def _cossine(lhs, rhs):
+        assert lhs is not None, "lhs is None."
+        assert rhs is not None, "rhs is None."
+
+        lhs_flatten = lhs.flatten()
+        rhs_flatten = rhs.flatten()
+        return np.dot(lhs_flatten, rhs_flatten) / (
+            np.linalg.norm(lhs_flatten) * (np.linalg.norm(rhs_flatten))
+        )
+
+    float_res = float_trace.get_float_results()
+    runtime_res = runtime_trace.get_layer_results()
+
+    data = {
+        "layer_name": [],
+        "cos_sim": [],
+    }
+    data_iter = runtime_res.keys()
+    if show_progress:
+        data_iter = tqdm.tqdm(data_iter, desc="Analyzing accuracy")
+    for key in data_iter:
+        if key not in float_res:
+            continue
+        f_paths = float_res[key]
+        r_paths = runtime_res[key]
+
+        cos = _cossine(
+            np.fromfile(f_paths, sep="\n", dtype=np.float32),
+            np.fromfile(r_paths, sep="\n", dtype=np.float32),
+        )
+
+        data["layer_name"].append(key)
+        data["cos_sim"].append(cos)
+
+    df = pandas.DataFrame(data)
+
+    df.sort_values(by=["cos_sim"], inplace=True)
+
+    dump_dataframe(
+        df,
+        topk=topk,
+        title=f"Accuracy Loss(X86 float vs backend quant)",
+        display=display,
+        to_csv=to_csv,
+    )
+    return df

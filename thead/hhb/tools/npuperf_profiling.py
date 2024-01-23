@@ -24,8 +24,9 @@ from typing import List
 import argparse
 
 from tvm.relay.quantize.qnn_transform import QNNConvertDict
-from ..core.common import to_json_with_formatted, HHBException
+from ..core.common import to_json, HHBException
 from ..core.profiler_manage import ArchConfigBase
+from hhb.analysis.trace import HHBTrace, HHBTraceEventComplete, HHBTraceEventCategory
 
 try:
     import npuperf
@@ -321,56 +322,33 @@ def get_mapping_by_name(hw_name: str):
     return res
 
 
-class Npuperf2ChromeTrace(object):
+class Npuperf2Trace(object):
     """convert npuperf log into chrome trace."""
 
-    def __init__(self, all_cme: List[CostModelEvaluation]) -> None:
+    def __init__(self, all_cme: List[CostModelEvaluation], arch_name: str) -> None:
         self.curr_ts = round(time.time() * (10**6))  # us timestamps
         self.all_cme = all_cme
 
-        self.chrome_trace = collections.OrderedDict()
-        self.init_trace()
+        self.trace = HHBTrace()
+        self.init_trace(arch_name=arch_name)
 
-    def init_trace(self):
+    def init_trace(self, arch_name):
         # add otherData field
-        other_data = collections.OrderedDict()
-        other_data["tool"] = "HHB 2.7.0"
-        other_data["perf_tool"] = "npuperf 0.1.0"
-        self.chrome_trace["otherData"] = other_data
-
-        self.chrome_trace["traceEvents"] = []
-
-    def create_complete_event(
-        self,
-        name,
-        cat,
-        ts,
-        dur: int = 0,
-        pid: int = 0,
-        tid: int = 0,
-        args=None,
-    ):
-        data = collections.OrderedDict()
-        data["ph"] = "X"
-        data["name"] = name
-        data["cat"] = cat
-        data["ts"] = ts
-        data["dur"] = dur
-        data["pid"] = pid
-        data["tid"] = tid
-        data["args"] = args
-
-        return data
+        self.trace.update_other_data(
+            {
+                "source": f"npuperf {npuperf.__version__}",
+                "hardware": arch_name,
+            }
+        )
 
     def export(self, path):
-        to_json_with_formatted(self.chrome_trace, path)
+        to_json(self.chrome_trace, path, with_format=True)
 
     def run(self):
-        trace_event = self.chrome_trace["traceEvents"]
         for cme in self.all_cme:
             op_start_ts = self.curr_ts
             cme_name = str(cme.layer)
-            layer_name = cme_name  # (fixme) use actaul layer name
+            layer_name = cme.layer.name  # (fixme) use actaul layer name
 
             ideal_latency = round(cme.ideal_cycle / 1e6 * 1e3)
             spatial_latency = round(cme.spatial_stall_cycle / 1e6 * 1e3)
@@ -386,12 +364,13 @@ class Npuperf2ChromeTrace(object):
             # total latency = MAC latency + onloading latecny + offloading latency
             args = collections.OrderedDict()
             args["name"] = layer_name
-            args["total_energy"] = cme.energy_total / 1e9
+            args["total_energy(mJ)"] = cme.energy_total / 1e9
             args["MAC utilization 2"] = cme.MAC_utilization2
-            trace_event.append(
-                self.create_complete_event(
+            args["memory"] = cme.mem_ins_demc
+            self.trace.insert_event(
+                HHBTraceEventComplete(
                     name=cme_name,
-                    cat="op",
+                    cat=HHBTraceEventCategory.KERNEL,
                     ts=op_start_ts,
                     dur=total_latency,
                     args=args,
@@ -403,10 +382,10 @@ class Npuperf2ChromeTrace(object):
             onload_start_ts = op_start_ts
             args = collections.OrderedDict()
             args["name"] = layer_name
-            trace_event.append(
-                self.create_complete_event(
+            self.trace.insert_event(
+                HHBTraceEventComplete(
                     name=cme_name + "::onloading",
-                    cat="memory",
+                    cat=HHBTraceEventCategory.MEMORY,
                     ts=onload_start_ts,
                     dur=onload_latency,
                     args=args,
@@ -417,10 +396,10 @@ class Npuperf2ChromeTrace(object):
             mac_start_ts = onload_start_ts + onload_latency
             args = collections.OrderedDict()
             args["name"] = layer_name
-            trace_event.append(
-                self.create_complete_event(
+            self.trace.insert_event(
+                HHBTraceEventComplete(
                     name=cme_name + "::MAC",
-                    cat="kernel",
+                    cat=HHBTraceEventCategory.KERNEL,
                     ts=mac_start_ts,
                     dur=mac_latency,
                     args=args,
@@ -431,10 +410,10 @@ class Npuperf2ChromeTrace(object):
             ideal_start_ts = mac_start_ts
             args = collections.OrderedDict()
             args["name"] = layer_name
-            trace_event.append(
-                self.create_complete_event(
+            self.trace.insert_event(
+                HHBTraceEventComplete(
                     name=cme_name + "::MAC::ideal_computation",
-                    cat="kernel",
+                    cat=HHBTraceEventCategory.KERNEL,
                     ts=ideal_start_ts,
                     dur=ideal_latency,
                     args=args,
@@ -445,10 +424,10 @@ class Npuperf2ChromeTrace(object):
             spatial_start_ts = ideal_start_ts + ideal_latency
             args = collections.OrderedDict()
             args["name"] = layer_name
-            trace_event.append(
-                self.create_complete_event(
+            self.trace.insert_event(
+                HHBTraceEventComplete(
                     name=cme_name + "::MAC::spatial_stall",
-                    cat="kernel",
+                    cat=HHBTraceEventCategory.KERNEL,
                     ts=spatial_start_ts,
                     dur=spatial_latency,
                     args=args,
@@ -459,10 +438,10 @@ class Npuperf2ChromeTrace(object):
             temporal_start_ts = spatial_start_ts + spatial_latency
             args = collections.OrderedDict()
             args["name"] = layer_name
-            trace_event.append(
-                self.create_complete_event(
+            self.trace.insert_event(
+                HHBTraceEventComplete(
                     name=cme_name + "::MAC::temporal_stall",
-                    cat="kernel",
+                    cat=HHBTraceEventCategory.KERNEL,
                     ts=temporal_start_ts,
                     dur=temporal_latency,
                     args=args,
@@ -473,10 +452,10 @@ class Npuperf2ChromeTrace(object):
             offload_start_ts = mac_start_ts + mac_latency
             args = collections.OrderedDict()
             args["name"] = layer_name
-            trace_event.append(
-                self.create_complete_event(
+            self.trace.insert_event(
+                HHBTraceEventComplete(
                     name=cme_name + "::offloading",
-                    cat="memory",
+                    cat=HHBTraceEventCategory.MEMORY,
                     ts=offload_start_ts,
                     dur=offload_latency,
                     args=args,
@@ -572,7 +551,8 @@ def generate_trace(model_data, arch_config, save_temps=False, output_dir="."):
     else:
         results = list([item[0] for item in results])
 
-    n2c = Npuperf2ChromeTrace(results)
+    n2c = Npuperf2Trace(results, arch_name=config.name)
     n2c.run()
+    trace_data = n2c.trace.to_dict()
 
-    return n2c.chrome_trace
+    return trace_data

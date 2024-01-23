@@ -17,7 +17,7 @@
  * under the License.
  */
 
-/* auto generate by HHB_VERSION "2.8.1" */
+/* auto generate by HHB_VERSION "2.9.5" */
 
 #_hhb_header_files_#
 #include "shl_c920.h"
@@ -157,6 +157,7 @@ int main(int argc, char **argv) {
         csinn_free_tensor(input_tensors[j]);
     }
 
+    free(option);
     csinn_session_deinit(sess);
     csinn_free_session(sess);
 

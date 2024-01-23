@@ -994,7 +994,7 @@ class HHBBoardBuildRuntime:
             self.link_flag += " -L " + shl_dir + "c908/lib/ -lshl -static "
         elif board == "c920":
             if link_lib in ("unset", "shl_c920"):
-                self.link_flag += " -L " + shl_dir + "c920/lib/ -lshl -static "
+                self.link_flag += " -L " + shl_dir + "c920/lib/ -lshl -fopenmp -static "
             elif link_lib == "shl_th1520":
                 self.link_flag += " -Wl,-unresolved-symbols=ignore-in-shared-libs "
                 self.link_flag += " -L " + shl_dir + "th1520/lib/ -lshl "

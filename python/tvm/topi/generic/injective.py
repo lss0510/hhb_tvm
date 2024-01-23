@@ -72,7 +72,58 @@ def schedule_add(outs):
     Parameters
     ----------
     outs: Array of Tensor
-          The computation graph description of softmax
+          The computation graph description of add
+          in the format of an array of tensors.
+
+    Returns
+    -------
+    sch: Schedule
+        The computation schedule for the op.
+    """
+    return _default_schedule(outs, False)
+
+
+def schedule_subtract(outs):
+    """Schedule for subtract
+
+    Parameters
+    ----------
+    outs: Array of Tensor
+          The computation graph description of subtract
+          in the format of an array of tensors.
+
+    Returns
+    -------
+    sch: Schedule
+        The computation schedule for the op.
+    """
+    return _default_schedule(outs, False)
+
+
+def schedule_multiply(outs):
+    """Schedule for multiply
+
+    Parameters
+    ----------
+    outs: Array of Tensor
+          The computation graph description of multiply
+          in the format of an array of tensors.
+
+    Returns
+    -------
+    sch: Schedule
+        The computation schedule for the op.
+    """
+    return _default_schedule(outs, False)
+
+
+def schedule_divide(outs):
+    """Schedule for divide
+
+    Parameters
+    ----------
+    outs: Array of Tensor
+          The computation graph description of divide
           in the format of an array of tensors.
 
     Returns

@@ -108,181 +108,181 @@ const std::unordered_map<std::string, uint16_t> qnn_map = {
     {"qnn.csi.unpooling", QNN_OP_UNPOOLING},
     {"qnn.csi.upsampling", QNN_OP_UNPSAMPLING}};
 
-class QnnAddProfiler {
+class QnnAddProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnAvgPool2dProfiler {
+class QnnAvgPool2dProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnBatchNormProfiler {
+class QnnBatchNormProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnBiasAddProfiler {
+class QnnBiasAddProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnConcatenateProfiler {
+class QnnConcatenateProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnConv2dProfiler {
+class QnnConv2dProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnConv2dTranposeProfiler {
+class QnnConv2dTranposeProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnDenseProfiler {
+class QnnDenseProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnGlobalAvgPool2dProfiler {
+class QnnGlobalAvgPool2dProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnGlobalMaxPool2dProfiler {
+class QnnGlobalMaxPool2dProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnLRNProfiler {
+class QnnLRNProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnMaximumProfiler {
+class QnnMaximumProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnMaxPool2dProfiler {
+class QnnMaxPool2dProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnMaxPool2dLocationProfiler {
+class QnnMaxPool2dLocationProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnMaxPool2dWithArgmaxProfiler {
+class QnnMaxPool2dWithArgmaxProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnMultiplyProfiler {
+class QnnMultiplyProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnPreluProfiler {
+class QnnPreluProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnProposalProfiler {
+class QnnProposalProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnPsroipoolingProfiler {
+class QnnPsroipoolingProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnReluProfiler {
+class QnnReluProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnReshapeProfiler {
+class QnnReshapeProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnRoiPoolProfiler {
+class QnnRoiPoolProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnSigmoidProfiler {
+class QnnSigmoidProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnSoftmaxProfiler {
+class QnnSoftmaxProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnSplitProfiler {
+class QnnSplitProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnStridedSliceProfiler {
+class QnnStridedSliceProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnTanhProfiler {
+class QnnTanhProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnTransposeProfiler {
+class QnnTransposeProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnUnpoolingProfiler {
+class QnnUnpoolingProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class QnnUpsamplingProfiler {
+class QnnUpsamplingProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);

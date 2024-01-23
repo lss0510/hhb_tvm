@@ -26,7 +26,14 @@ from tvm.contrib import cblas
 from tvm.contrib import mkl
 from tvm.contrib import dnnl
 
-from .utils import get_simd_32bit_lanes, intrin_add_vv, intrin_macc_vf, intrin_load, intrin_act
+from .utils import (
+    get_simd_32bit_lanes,
+    intrin_add_vv,
+    intrin_macc_vf,
+    intrin_load,
+    intrin_act,
+    get_simd_16bit_lanes,
+)
 from .utils import get_act_mod
 from .. import generic, tag
 from ..utils import traverse_inline, get_const_tuple
@@ -119,7 +126,7 @@ def _schedule_dense_nopack_template(cfg, s, C):
     return s
 
 
-def _default_dense_pack_config(cfg, M, N, K):
+def _default_dense_pack_config(cfg, M, N, K, dtype):
     # Generate default schedule for dynamic shape.
     if isinstance(M, (tvm.tir.Var, tvm.tir.Any)):
         M = 16
@@ -128,7 +135,10 @@ def _default_dense_pack_config(cfg, M, N, K):
     if isinstance(K, (tvm.tir.Var, tvm.tir.Any)):
         K = 16
 
-    vec_width = get_simd_32bit_lanes()
+    if dtype == "float32":
+        vec_width = get_simd_32bit_lanes()
+    else:
+        vec_width = get_simd_16bit_lanes()
     tilex_ii = 1
     for bn in range(vec_width, 0, -1):
         if N % bn == 0:
@@ -157,7 +167,7 @@ def _default_dense_pack_config(cfg, M, N, K):
     cfg["tile_inner"] = SplitEntity([M // tiley_ii, tiley_ii])
 
 
-def _default_dense_nopack_config(cfg, M, N, K):
+def _default_dense_nopack_config(cfg, M, N, K, dtype):
     # Generate default schedule for dynamic shape.
     if isinstance(M, (tvm.tir.Var, tvm.tir.Any)):
         M = 16
@@ -166,7 +176,10 @@ def _default_dense_nopack_config(cfg, M, N, K):
     if isinstance(K, (tvm.tir.Var, tvm.tir.Any)):
         K = 16
 
-    vec_width = get_simd_32bit_lanes()
+    if dtype == "float32":
+        vec_width = get_simd_32bit_lanes()
+    else:
+        vec_width = get_simd_16bit_lanes()
     tilek_bn = 1
     for bn in range(vec_width * 2, 0, -1):
         if K % bn == 0:
@@ -195,7 +208,7 @@ def dense_nopack(cfg, data, weight, bias=None, out_dtype=None):
         "tile_k", 32 if isinstance(K, (tvm.tir.Var, tvm.tir.Any)) else K, num_outputs=2
     )
     if cfg.is_fallback:
-        _default_dense_nopack_config(cfg, M, N, K)
+        _default_dense_nopack_config(cfg, M, N, K, out_dtype)
 
     vec = cfg["tile_k"].size[-1]
     k = te.reduce_axis((0, K // vec), "k")
@@ -255,7 +268,7 @@ def dense_pack(cfg, data, weight, bias=None, out_dtype=None):
         filter=lambda y: y.size[-1] <= 16,
     )
     if cfg.is_fallback:
-        _default_dense_pack_config(cfg, M, N, K)
+        _default_dense_pack_config(cfg, M, N, K, out_dtype)
 
     if len(weight.shape) == 2:
         packw_bn = cfg["tile_x"].size[-1]

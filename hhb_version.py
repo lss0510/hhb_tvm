@@ -29,7 +29,7 @@ import time
 # current version
 # We use the version of the incoming release for code
 # that is under development
-__version__ = "2.8.1"
+__version__ = "2.9.5"
 __build_time__ = time.strftime("%Y%m%d", time.localtime())
 
 # Implementations
@@ -85,6 +85,11 @@ def main():
         os.path.join(proj_root, "thead", "hhb", "core", "common.py"),
         r"(?<=__build_time__ = \")[.0-9a-z]+",
         __build_time__,
+    )
+    update(
+        os.path.join(proj_root, "thead", "hhb", "__init__.py"),
+        r"(?<=__version__ = \")[.0-9a-z]+",
+        __version__,
     )
 
     update_version(os.path.join(proj_root, "thead", "hhb", "config", "c906.tp"))

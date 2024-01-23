@@ -75,23 +75,6 @@ class AiTraceCounter : private ExprVisitor {
     auto fopname = fopname_map.get(call_node->op, nullptr);
     Array<AiTraceDataFrame> all_trace_data;
 
-    /* Add op info */
-    std::string op_type = "unknown";
-    if (fopname != nullptr) {
-      op_type = fopname();
-    }
-    std::string op_name = op_type + "_" + std::to_string(cnt++);
-    ReplaceInvalidSymbol(&op_name, "_");
-
-    Map<String, ObjectRef> op_info;
-    op_info.Set("type", String(op_type));
-    op_info.Set("name", String(op_name));
-
-    AiTraceDataFrame op_info_trace_data;
-    op_info_trace_data.Set("op", op_info);
-
-    all_trace_data.push_back(op_info_trace_data);
-
     /* Add other info */
     AiTraceDataFrame tmp_data;
     // calculation amount
@@ -115,6 +98,26 @@ class AiTraceCounter : private ExprVisitor {
       }
       all_trace_data.push_back(tmp_data);
     }
+
+    /* Add op info */
+    auto op = call_node->op.as<tvm::OpNode>();
+    std::string op_type = op->name;
+
+    std::string layer_name = "";
+    if (fopname != nullptr) {
+      layer_name = fopname();
+    } else {
+      layer_name = op_type + "_" + std::to_string(cnt++);
+    }
+
+    Map<String, ObjectRef> op_info;
+    op_info.Set("type", String(op_type));
+    op_info.Set("name", String(layer_name));
+
+    AiTraceDataFrame op_info_trace_data;
+    op_info_trace_data.Set("op", op_info);
+
+    all_trace_data.push_back(op_info_trace_data);
 
     /* combine all trace data. */
     AiTraceDataFrame combine_data;

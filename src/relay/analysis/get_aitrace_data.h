@@ -259,199 +259,227 @@ class MemoryIndicator {
   int64_t output;
 };
 
-class AddProfiler {
+class BaseProfiler {
+ public:
+  static String GetLayerName() { return LayerName(); }
+
+  static void SetLayerName(const Call& call_node) {
+    static String& n = LayerName();
+
+    if (call_node->span.defined()) {
+      const auto* span_node = call_node->span.as<SpanNode>();
+      ICHECK(span_node);
+      n = span_node->source_name->name;
+    } else {
+      n = String("");
+    }
+  }
+
+  static void SetLayerName(const String& layer_name) {
+    static String& n = LayerName();
+    n = layer_name;
+  }
+
+ private:
+  static String& LayerName() {
+    static String name = String("");
+    return name;
+  }
+};
+
+class AddProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class AvgPool2dProfiler {
+class AvgPool2dProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class BatchFlattenProfiler {
+class BatchFlattenProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class BatchNormProfiler {
+class BatchNormProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class BiasAddProfiler {
+class BiasAddProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class ConcatenateProfiler {
+class ConcatenateProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class Conv2dProfiler {
+class Conv2dProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class Conv2dTranposeProfiler {
+class Conv2dTranposeProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class DenseProfiler {
+class DenseProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class DropoutProfiler {
+class DropoutProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class GlobalAvgPool2dProfiler {
+class GlobalAvgPool2dProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class GlobalMaxPool2dProfiler {
+class GlobalMaxPool2dProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class LRNProfiler {
+class LRNProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class L2NormalizeNProfiler {
+class L2NormalizeNProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class MaximumProfiler {
+class MaximumProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class MaxPool2dProfiler {
+class MaxPool2dProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class MaxPool2dLocationProfiler {
+class MaxPool2dLocationProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class MaxPool2dWithArgmaxProfiler {
+class MaxPool2dWithArgmaxProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class MultiplyProfiler {
+class MultiplyProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class PreluProfiler {
+class PreluProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class ProposalProfiler {
+class ProposalProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class PsroipoolingProfiler {
+class PsroipoolingProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class ReluProfiler {
+class ReluProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class ReshapeProfiler {
+class ReshapeProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class RoiPoolProfiler {
+class RoiPoolProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class SigmoidProfiler {
+class SigmoidProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class SoftmaxProfiler {
+class SoftmaxProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class SplitProfiler {
+class SplitProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class StridedSliceProfiler {
+class StridedSliceProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class TanhProfiler {
+class TanhProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class TransposeProfiler {
+class TransposeProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class UnpoolingProfiler {
+class UnpoolingProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);
 };
 
-class UpsamplingProfiler {
+class UpsamplingProfiler : public BaseProfiler {
  public:
   static AiTraceDataFrame GetCalculationAmount(const Call& node);
   static AiTraceDataFrame GetMemory(const Call& node);

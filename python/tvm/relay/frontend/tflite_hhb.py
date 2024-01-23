@@ -2111,17 +2111,14 @@ class OperatorConverter(object):
             q_params[2][0] = CONST
             weight_scale = weight_tensor.qnn_params["scale"]
             weight_zp = weight_tensor.qnn_params["zero_point"]
-            if isinstance(weight_scale, float):
-                weight_scale_val = get_scalar_from_constant(weight_scale)
-                weight_zp_val = get_scalar_from_constant(weight_zp)
-                q_params[1].append(weight_scale_val)
-                q_params[1].append(weight_zp_val)
-
+            weight_scale_val = get_tensor_from_constant(weight_scale)
+            weight_zp_val = get_tensor_from_constant(weight_zp)
+            if weight_scale_val.size == 1:
+                q_params[1].append(weight_scale_val.item(0))
+                q_params[1].append(weight_zp_val.item(0))
             else:
                 q_params[1][2] = PER_CHANNEL
                 q_params[2][2] = PER_CHANNEL
-                weight_scale_val = get_tensor_from_constant(weight_scale)
-                weight_zp_val = get_tensor_from_constant(weight_zp)
                 if weight_scale_val.size != weight_zp_val.size and weight_zp_val.size == 1:
                     if int(weight_zp_val) == 0:
                         weight_zp_val = np.zeros_like(weight_scale_val)
@@ -2148,17 +2145,14 @@ class OperatorConverter(object):
             if bias_tensor.qnn_params:
                 bias_scale = bias_tensor.qnn_params["scale"]
                 bias_zp = bias_tensor.qnn_params["zero_point"]
-                if isinstance(bias_scale, float):
-                    bias_scale_val = get_scalar_from_constant(bias_scale)
-                    bias_zp_val = get_scalar_from_constant(bias_zp)
-                    q_params[2].append(bias_scale_val)
-                    q_params[2].append(bias_zp_val)
-
+                bias_scale_val = get_tensor_from_constant(bias_scale)
+                bias_zp_val = get_tensor_from_constant(bias_zp)
+                if bias_scale_val.size == 1:
+                    q_params[2].append(bias_scale_val.item(0))
+                    q_params[2].append(bias_zp_val.item(0))
                 else:
                     q_params[2][2] = PER_CHANNEL
                     q_params[2][2] = PER_CHANNEL
-                    bias_scale_val = get_tensor_from_constant(bias_scale)
-                    bias_zp_val = get_tensor_from_constant(bias_zp)
                     if bias_scale_val.size != bias_zp_val.size and bias_zp_val.size == 1:
                         if int(bias_zp_val) == 0:
                             bias_zp_val = np.zeros_like(bias_scale_val)
