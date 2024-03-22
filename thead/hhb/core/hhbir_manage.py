@@ -1030,7 +1030,7 @@ class HHBBoardBuildRuntime:
 
         if board in ("c906", "c908", "c920", "c920v2", "rvm", "th1520", "hth1520", "th1520_x86"):
             self.link_flag += (
-                decode_dir + runtime_dir + " -lprebuilt_runtime -ljpeg -lpng -lz -lstdc++ -lm "
+                decode_dir + runtime_dir + " -lprebuilt_runtime -ljpeg -lpng -lz -lstdc++ -lm -fopenmp "
             )
         else:
             self.link_flag += decode_dir + runtime_dir + " -lprebuilt_runtime -fopenmp -lm -lstdc++"

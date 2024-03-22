@@ -1,0 +1,1 @@
+hhb_cli.py -C --model-file ../../lss_test/test_model.onnx --data-scale 0.017 --data-mean 124 117 104 --board c920 --postprocess save_and_top5 --input-name input --output-name output --input-shape 1 3 224 224 -cd ../../hhb-examples/c920/vit/persian_cat.jpg --quantization-scheme int8_asym -o ../../lss_test/hhb_out
