@@ -56,15 +56,17 @@ class TestModel(nn.Module):
     def __init__(self, in_features, out_features):
         super(TestModel, self).__init__()
         self.conv1 = nn.Conv2d(3, 1, 3, 2)
+        self.conv2 = nn.Conv2d(1, 1, 3, 2)
         self.linear = nn.Linear(in_features, out_features)
-        self.eps = 1e-6
 
     def forward(self, x):
         x = self.conv1(x)
+        x = x.pow(2)
+        x = self.conv2(x)
         x = torch.reshape(x, [1, -1])
         x = self.linear(x)
         return x
-model = TestModel(12321, 32)
+model = TestModel(3025, 32)
 
 # 定义一个包含mlp的模型
 # class MlpModel(nn.Module):

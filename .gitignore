@@ -270,3 +270,4 @@ gallery/how_to/work_with_microtvm/micro_tvmc.py
 .docker-image-names/
 
 /install_nn2
+/lss_test
